@@ -1,0 +1,337 @@
+###### if running the full bayesian version of these models, should probably run them on a cluster
+
+library(tidyverse)
+library(MuMIn)
+library(brms)
+
+species_precip <- readRDS("bbs,daymet_full.RData")
+
+# running models -----------------------------------------------------
+
+taxa_output <- vector('list', length(species_precip))
+#taxa_output_bayes <- vector('list', length(species_precip)) # unnecessary
+# also recording which populations are sensitive and which are not
+sensitive_pops <- list()
+resilient_pops <- list()
+#sensitive_pops_bayes <- list() # decided don't really need these, don't need posterior distributions just need to know if they're sensitive or not
+#resilient_pops_bayes <- list()
+
+# saving posterior distribution for later analyses
+#iteration_estimates_taxa <- vector('list', length(species_precip))
+iteration_estimates_taxa <- vector('list')
+
+for(i in 1:length(species_precip)){
+  system <- species_precip[[i]] # have to do this for the dredge function to work (smh)
+  
+  # creating a vector of column names in the na.buntings dataset that represent data for a BCR
+  bcrs <- grep("[[:upper:]]{3}", names(species_precip[[i]]), value = TRUE)
+  
+  # running model for each bcr
+  bcr_output <- vector('list', length(bcrs))
+  #iteration_estimates_bcr <- vector('list', length(bcrs))
+  iteration_estimates_bcr <- vector('list')
+  for(bcr in bcrs){
+    # figuring out which monsoonal area has the greatest influence for each bcr
+    baja.global.model <- lm(get(bcr) ~ baja.prcp.wide.mean*baja.monsoon.halfway.mean, data = system, na.action = "na.fail")
+    baja.mslist <- dredge(baja.global.model, extra="adjR^2")
+    
+    sonora.global.model <- lm(get(bcr) ~ sonora.prcp.wide.mean*sonora.monsoon.halfway.mean, data = system, na.action = "na.fail")
+    sonora.mslist <- dredge(sonora.global.model, extra="adjR^2")
+    
+    central.mex.global.model <- lm(get(bcr) ~ central_mex.prcp.wide.mean*central_mex.monsoon.halfway.mean, data = system, na.action = "na.fail")
+    central.mex.mslist <- dredge(central.mex.global.model, extra="adjR^2")
+    
+    southern.mex.global.model <- lm(get(bcr) ~ south_mex.prcp.wide.mean*south_mex.monsoon.halfway.mean, data = system, na.action = "na.fail")
+    southern.mex.mslist <- dredge(southern.mex.global.model, extra="adjR^2")
+    
+    if(max(baja.mslist$`adjR^2`) > max(sonora.mslist$`adjR^2`) &
+       max(baja.mslist$`adjR^2`) > max(central.mex.mslist$`adjR^2`) &
+       max(baja.mslist$`adjR^2`) > max(southern.mex.mslist$`adjR^2`)){
+      mslist <- baja.mslist
+    } else if (max(sonora.mslist$`adjR^2`) > max(baja.mslist$`adjR^2`) &
+               max(sonora.mslist$`adjR^2`) > max(central.mex.mslist$`adjR^2`) &
+               max(sonora.mslist$`adjR^2`) > max(southern.mex.mslist$`adjR^2`)){
+      mslist <- sonora.mslist
+    } else if (max(central.mex.mslist$`adjR^2`) > max(sonora.mslist$`adjR^2`) &
+               max(central.mex.mslist$`adjR^2`) > max(baja.mslist$`adjR^2`) &
+               max(central.mex.mslist$`adjR^2`) > max(southern.mex.mslist$`adjR^2`)){
+      mslist <- central.mex.mslist
+    } else {
+      mslist <- southern.mex.mslist
+    }
+    
+    topmod <- mslist %>% 
+      filter(AICc == min(AICc))
+    
+    
+    
+    # generating the best model
+    preds <- topmod[,1:4] %>% #### need to change number of selected columns if have a different number of predictor variables
+      select_if(~ !(is.na(.))) # selecting only predictor variables in best model
+    preds <- names(preds)
+    
+    # if preds only intercept...record this population in a list of nonsensitive populations,
+    # if preds more than just intercept, record this population in a list of sensitive populations and continue with collecting coefficients below
+    # if intercept only signicant predictor, should I write intercept only model?
+    # compare frequencies of BCR's and species in sensitive vs. insensitive lists
+    if(("(Intercept)" %in% preds) & (length(preds) == 1) ){ #### but what if some top models contain both intercept and predictors??? what does this mean?
+      
+      # add this population to resilient list and stop
+      resilient_pop <- as_tibble(names(species_precip)[[i]]) #(regmatches(bcr, regexpr("[[:upper:]]{4}", bcr)))
+      resilient_pop <- rename(resilient_pop, species = value)
+      resilient_pop$bcr <- bcr
+      resilient_pops[[length(resilient_pops) + 1]] <- resilient_pop
+      
+      next
+      
+    } else {
+      # add this population to sensitive list and keep going
+      sensitive_pop <- as_tibble(names(species_precip)[[i]]) #as_tibble(regmatches(bcr, regexpr("[[:upper:]]{4}", bcr)))
+      sensitive_pop <- rename(sensitive_pop, species = value)
+      sensitive_pop$bcr <- bcr
+      sensitive_pop$preds <- paste(preds, collapse=", ") 
+      sensitive_pops[[length(sensitive_pops) + 1]] <- sensitive_pop
+    }
+    
+    # removing intercept from list of predictors so can rerun model
+    preds <- preds[!preds %in% "(Intercept)"]
+    preds <- sub(":", "+", preds)
+    print(preds)
+    
+    # combining any remaining significant predictors, separated by "+" so can be run in model
+    # preds <- paste(preds, collapse=" + ") 
+    
+    if(length(preds) == 1){
+      #topmod <- lm(get(bcr) ~ as.name(preds.1), data = system, na.action = "na.fail")
+      topmod <- lm(substitute(get(bcr) ~ i, list(i = as.name(preds[1]))), data = system, na.action = "na.fail")
+      
+      topmod$coefficients
+      int <- topmod$coefficients[["(Intercept)"]]
+      pred <- topmod$coefficients[[2]]
+      priors <- c(set_prior(paste("normal(", int, ",10)", sep = ""), class = "Intercept"),
+                  set_prior(paste("normal(", pred, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[2])))
+      func.1 <- paste(get("bcr"), "~", preds[1])
+      topmod_stan <- brm(formula = as.formula(func.1), data=system, family=gaussian(),
+                         prior = priors,
+                         control=list(adapt_delta = 0.8, max_treedepth=10),
+                         warmup=2000, iter=3000, thin=1, chains=3, cores=3)
+      summary(topmod_stan)
+      posterior_summary(topmod_stan)
+
+      # saving posterior distribution
+      posterior_draws <- posterior_samples(topmod_stan)
+
+      pattern <- "prcp|halfway"
+      predictor_cols <- grep(pattern, names(posterior_draws), value = TRUE)
+
+      iteration_estimates_bcr[[bcr]] <- list(
+        species <- names(species_precip)[[i]],
+        bcr <- bcr,
+        species.pop <- paste(names(species_precip)[[i]],bcr),
+        predictor <- predictor_cols,
+        beta_estimate <- posterior_summary(topmod_stan)[,"Estimate"],
+        beta_estimate_ci_lower <- posterior_summary(topmod_stan)[,"Q2.5"],
+        beta_estimate_ci_upper <- posterior_summary(topmod_stan)[,"Q97.5"],
+        rhat <- summary(topmod_stan)$fixed[, "Rhat"],
+        bulk_ess <- summary(topmod_stan)$fixed[, "Bulk_ESS"],
+        tail_ess <- summary(topmod_stan)$fixed[, "Tail_ESS"],
+        beta_posterior <- posterior_draws[, predictor_cols]
+      )
+      
+      
+    } else if(length(preds) == 2){
+      topmod <- lm(substitute(get(bcr) ~ i + j, list(i = as.name(preds[1]), j = as.name(preds[2]))), data = system, na.action = "na.fail")
+      
+      topmod$coefficients
+      int <- topmod$coefficients[["(Intercept)"]]
+      pred1 <- topmod$coefficients[[2]]
+      pred2 <- topmod$coefficients[[3]]
+      priors <- c(set_prior(paste("normal(", int, ",10)", sep = ""), class = "Intercept"),
+                  set_prior(paste("normal(", pred1, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[2])),
+                  set_prior(paste("normal(", pred2, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[3])))
+      func.2 <- paste(get("bcr"), "~", preds[1], "+", preds[2])
+      topmod_stan <- brm(formula = as.formula(func.2), data=system, family=gaussian(),
+                         prior = priors,
+                         control=list(adapt_delta = 0.8, max_treedepth=10),
+                         warmup=2000, iter=3000, thin=1, chains=3, cores=3)
+      summary(topmod_stan)
+      posterior_summary(topmod_stan)
+
+      # saving posterior distribution
+      posterior_draws <- posterior_samples(topmod_stan)
+
+      pattern <- "prcp|halfway"
+      predictor_cols <- grep(pattern, names(posterior_draws), value = TRUE)
+
+      iteration_estimates_bcr[[bcr]] <- list(
+        species <- names(species_precip)[[i]],
+        bcr <- bcr,
+        species.pop <- paste(names(species_precip)[[i]],bcr),
+        predictor <- predictor_cols,
+        beta_estimate <- posterior_summary(topmod_stan)[,"Estimate"],
+        beta_estimate_ci_lower <- posterior_summary(topmod_stan)[,"Q2.5"],
+        beta_estimate_ci_upper <- posterior_summary(topmod_stan)[,"Q97.5"],
+        rhat <- summary(topmod_stan)$fixed[, "Rhat"],
+        bulk_ess <- summary(topmod_stan)$fixed[, "Bulk_ESS"],
+        tail_ess <- summary(topmod_stan)$fixed[, "Tail_ESS"],
+        beta_posterior <- posterior_draws[, predictor_cols]
+      )
+      
+    } else {
+      topmod <- lm(substitute(get(bcr) ~ i * j, list(i = as.name(preds[1]), j = as.name(preds[2]))), data = system, na.action = "na.fail") # how do you know the first two variables aren't the interaction
+      
+      topmod$coefficients
+      int <- topmod$coefficients[["(Intercept)"]]
+      pred1 <- topmod$coefficients[[2]]
+      pred2 <- topmod$coefficients[[3]]
+      pred3 <- topmod$coefficients[[4]]
+      priors <- c(set_prior(paste("normal(", int, ",10)", sep = ""), class = "Intercept"),
+                  set_prior(paste("normal(", pred1, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[2])),
+                  set_prior(paste("normal(", pred2, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[3])),
+                  set_prior(paste("normal(", pred3, ",10)", sep = ""),class="b",coef=names(topmod$coefficients[4])))
+      func.3 <- paste(get("bcr"), "~", preds[1], "*", preds[2])
+      topmod_stan <- brm(formula = as.formula(func.3), data=system, family=gaussian(),
+                         prior = priors,
+                         control=list(adapt_delta = 0.8, max_treedepth=10),
+                         warmup=2000, iter=3000, thin=1, chains=3, cores=3)
+      summary(topmod_stan)
+      posterior_summary(topmod_stan)
+
+      # saving posterior distribution
+      posterior_draws <- posterior_samples(topmod_stan)
+
+      pattern <- "prcp|halfway"
+      predictor_cols <- grep(pattern, names(posterior_draws), value = TRUE)
+
+      iteration_estimates_bcr[[bcr]] <- list(
+        species <- names(species_precip)[[i]],
+        bcr <- bcr,
+        species.pop <- paste(names(species_precip)[[i]],bcr),
+        predictor <- predictor_cols,
+        beta_estimate <- posterior_summary(topmod_stan)[,"Estimate"],
+        beta_estimate_ci_lower <- posterior_summary(topmod_stan)[,"Q2.5"],
+        beta_estimate_ci_upper <- posterior_summary(topmod_stan)[,"Q97.5"],
+        rhat <- summary(topmod_stan)$fixed[, "Rhat"],
+        bulk_ess <- summary(topmod_stan)$fixed[, "Bulk_ESS"],
+        tail_ess <- summary(topmod_stan)$fixed[, "Tail_ESS"],
+        beta_posterior <- posterior_draws[, predictor_cols]
+      )
+    }
+
+    
+    
+    betas <- summary(topmod)$coefficients[,1]
+    std.errors <- summary(topmod)$coefficients[,2]
+    p.values <- summary(topmod)$coefficients[,4]
+    
+    bcr_output[[bcr]] <- as_tibble(betas)
+    bcr_output[[bcr]] <- rename(bcr_output[[bcr]], beta = value)
+    bcr_output[[bcr]]$std.error <- std.errors
+    bcr_output[[bcr]]$p.value <- p.values
+    bcr_output[[bcr]]$species.pop <- paste(names(species_precip)[[i]],bcr)
+    bcr_output[[bcr]]$species <- names(species_precip)[[i]] #regmatches(bcr, regexpr("[[:upper:]]{3}", bcr))
+    bcr_output[[bcr]]$population <- bcr #sub("[[:upper:]]{4}_", "", bcr)
+    bcr_output[[bcr]]$significance <- ifelse(bcr_output[[bcr]]$p.value >= 0.05, FALSE, TRUE)
+    bcr_output[[bcr]]$predictor <- rownames(summary(topmod)$coefficients)
+    
+    # now just reording columns to be more intuitive
+    col_order <- c("species.pop", "species", "population", "predictor", "beta", "std.error", "p.value", "significance")
+    bcr_output[[bcr]] <- bcr_output[[bcr]][, col_order]
+  }
+  bcr_output_all <- do.call(rbind, bcr_output)
+  taxa_output[[i]] <- bcr_output_all
+  
+  # combining iterations from bayesian models
+  iteration_estimates_taxa[[i]] <- iteration_estimates_bcr
+}
+
+saveRDS(iteration_estimates_taxa, file="bbs_monsoon_mods_iterations.RData")
+
+taxa_output_all <- do.call(rbind, taxa_output)
+write_csv(taxa_output_all,"taxa_output_all.csv")
+
+
+# filtering species and bcrs -----------------------------------------------------
+
+taxa_output_all <- taxa_output_all %>% 
+  filter(predictor != "(Intercept)")
+taxa_output_all <- taxa_output_all %>% 
+  filter(species != "Lark Bunting" & species != "Orchard Oriole") %>% 
+  filter(species.pop != "Warbling Vireo BCR17" & species.pop != "Warbling Vireo BCR18" &
+           species.pop != "Warbling Vireo BCR19"& species.pop != "Warbling Vireo BCR21" &
+           species.pop != "Lark Sparrow BCR17" & species.pop != "Lark Sparrow BCR18" &
+           species.pop != "Lark Sparrow BCR19"& species.pop != "Lark Sparrow BCR21" &
+           species.pop != "Painted Bunting BCR25" & species.pop != "Painted Bunting BCR26")
+
+
+# labeling pops as molt-migrants and non-molt-migrants, preparing datasets for plotting -----------------------------------------------------
+
+molt_migrants <- c("Lazuli Bunting", "Bullock's Oriole", "Black-headed Grosbeak", 
+                   "Ash-throated Flycatcher", "Western Tanager", "Lesser Goldfinch",
+                   "Lucy's Warbler", "Western Kingbird",
+                   "Lark Bunting", "Sprague's Pipit", "Gray Flycatcher")
+pabu_mm_bcrs <- c("BCR18", "BCR19", "BCR20", "BCR21", "BCR22", "BCR35", "BCR36")
+western_mm_bcrs <- c("BCR5", "BCR9", "BCR10", "BCR15", "BCR16", "BCR32", "BCR33", "BCR34")
+
+taxa_output_all$molt_migrant <- ifelse(taxa_output_all$species %in% molt_migrants, TRUE, ifelse(
+  taxa_output_all$species == "Painted Bunting" &
+    taxa_output_all$population %in% pabu_mm_bcrs, TRUE, ifelse(
+      taxa_output_all$species == "Warbling Vireo" &
+        taxa_output_all$population %in% western_mm_bcrs, TRUE, ifelse(
+          taxa_output_all$species == "Chipping Sparrow" &
+            taxa_output_all$population %in% western_mm_bcrs, TRUE, ifelse(
+              taxa_output_all$species == "Lark Sparrow" &
+                taxa_output_all$population %in% western_mm_bcrs, TRUE, ifelse(
+                  taxa_output_all$species == "Northern Rough-winged Swallow" &
+                    taxa_output_all$population %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    )))
+
+
+mm.timing.pops <- taxa_output_all %>% 
+  filter(molt_migrant == TRUE) %>%
+  #filter(species %in% non_molt_migrants) %>% 
+  filter(predictor %in% grep("halfway", taxa_output_all$predictor, value = TRUE)) %>% 
+  filter(!predictor %in% grep(":", taxa_output_all$predictor, value = TRUE)) %>%  # and also does not contain ":"
+  filter(population != "continent")
+nmm.timing.pops <- taxa_output_all %>% 
+  filter(molt_migrant == FALSE) %>%
+  #filter(species %in% non_molt_migrants) %>% 
+  filter(predictor %in% grep("halfway", taxa_output_all$predictor, value = TRUE)) %>% 
+  filter(!predictor %in% grep(":", taxa_output_all$predictor, value = TRUE)) %>%  # and also does not contain ":"
+  filter(population != "continent")
+
+
+mm.precip.pops <- taxa_output_all %>% 
+  filter(molt_migrant == TRUE) %>%
+  #filter(species %in% non_molt_migrants) %>% 
+  filter(predictor %in% grep("wide", taxa_output_all$predictor, value = TRUE)) %>% 
+  filter(!predictor %in% grep(":", taxa_output_all$predictor, value = TRUE)) %>%  # and also does not contain ":"
+  filter(population != "continent")
+nmm.precip.pops <- taxa_output_all %>% 
+  filter(molt_migrant == FALSE) %>%
+  #filter(species %in% non_molt_migrants) %>% 
+  filter(predictor %in% grep("wide", taxa_output_all$predictor, value = TRUE)) %>% 
+  filter(!predictor %in% grep(":", taxa_output_all$predictor, value = TRUE)) %>%  # and also does not contain ":"
+  filter(population != "continent")
+
+# plotting -----------------------------------------------------
+
+mm.timing.pops <- mm.timing.pops %>% 
+  arrange(beta)
+
+library(ggplot2)
+ggplot(mm.timing.pops, aes(x = beta, y = reorder(species.pop, beta), xmin = beta-std.error, xmax = beta+std.error)) +
+  geom_point() +
+  geom_errorbarh(height=.2) +
+  geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = "Estimated beta coefficient") + 
+  ggtitle("Non-molt-migrants, sensitivity to monsoon phenology")
+
+ggplot(mm.precip.pops, aes(x = beta, y = reorder(species.pop, beta), xmin = beta-std.error, xmax = beta+std.error)) +
+  geom_point() +
+  geom_errorbarh(height=.2) +
+  geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = "Estimated beta coefficient") + 
+  ggtitle("Molt-migrants, sensitivity to monsoon precipitation")

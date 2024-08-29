@@ -1,0 +1,194 @@
+library(bbsBayes)
+library(tidyverse)
+
+setwd("/Users/pauldougherty/Documents/Dissertation Research/Molt Migrant Conservation")
+
+
+bird.meta <- read.csv("molt_migrant_metadata.csv", header = TRUE)
+
+species_indices <- readRDS("species_indices.RData")
+
+#### the actual loop
+
+species_indices <- readRDS("species_indices.RData")
+
+species_indices <- subset(species_indices, names(species_indices) != "")
+
+## need to remove bcrs below a certain index
+
+min_year <- 1980
+max_year <- 2020 # trying with 2021, but was to 2018 before
+year_vector <- c(1980:2020)
+#year_vector <- c(1970,1971,1972,1973,1974,1975)
+
+### first just trying it with the base generate trends function
+species_trends <- vector('list')
+
+#for (species in unique(bird.meta$full_name)){
+for (i in names(species_indices)){
+  print(i)
+  
+  ### we want a nested list for each species
+  year_changes <- vector('list')
+  #for (i in unique(c(min_year:max_year))){
+  for (j in year_vector){
+    
+    year_changes[[j]] <- generate_trends(indices = species_indices[[i]],
+                                                         Min_year = j,
+                                                         Max_year = j + 1)
+  }
+  year_changes <- year_changes[-c(1:1979)]
+  
+  species_trends[[i]] <- year_changes
+  
+}
+
+
+# we need to extract all values and put into a single dataframe
+
+# need to add species to each dataframe, then merge all dataframes
+species_changes <- vector('list')
+for(i in unique(names(species_trends))){
+  
+  species_changes[[i]] <- do.call(rbind, species_trends[[i]])
+  species_changes[[i]]$species <- i
+  
+}
+
+species_changes_all <- do.call(rbind,species_changes)
+
+# removing species and BCR combinations that never have more than 1 individual predicted to occur
+#test <- species_changes_all
+species_changes_all <- species_changes_all %>%
+  group_by(species, Region) %>%
+  filter(any(Relative_Abundance >= 1)) %>%
+  ungroup()
+
+
+
+
+
+
+######## testing with custom function that saves posterior draws
+
+species_trends <- vector('list')
+
+#for (species in unique(bird.meta$full_name)){
+for (i in names(species_indices)){
+  print(i)
+
+  ### we want a nested list for each species
+  year_changes <- vector('list')
+  #for (i in unique(c(min_year:max_year))){
+  for (j in year_vector){
+
+    year_changes[[j]] <- generate_posterior_prop_changes_slope(indices = species_indices[[i]],
+                                                         Min_year = j,
+                                                         Max_year = j + 1)
+  }
+  year_changes <- year_changes[-c(1:1979)]
+
+  species_trends[[i]] <- year_changes
+
+}
+
+
+## need to make a list of estimates for each year
+
+species_changes <- vector('list')
+for(i in unique(names(species_trends))){
+
+  bcr_year_changes <- vector('list')
+  years <- 1:39
+
+  for(j in years){
+
+    bcr_changes <- vector('list')
+    bcrs <- unique(names(species_trends[[i]][[j]]))
+
+    for(k in bcrs){
+      bcr_changes[[k]] <- species_trends[[i]][[j]][[k]][["year_change"]]
+    }
+
+    bcr_year_changes[[j]] <- data.frame(
+      species = rep(i, each = 3000),
+      year = rep(j, each = 3000),
+      bcr = rep(bcrs, each = 3000),
+      trend = unlist(bcr_changes)
+    )
+  }
+  species_changes[[i]] <- do.call(rbind, bcr_year_changes)
+}
+species_changes_all <- do.call(rbind, species_changes)
+
+
+
+
+## now trying the same thing with slope changes and comparing results
+generate_posterior_prop_changes_slope
+
+
+
+# plotting correlations ---------------------------------------------------
+
+
+### making dataframes for different species
+bcr9 <- species_changes_all %>% 
+  filter(Strata_included == "BCR9") %>% 
+  select(species, Percent_Change, Start_year)
+
+wide_bcr9 <- pivot_wider(
+  data = bcr9,
+  names_from = species,
+  values_from = Percent_Change
+)
+
+### making dataframes for different bcrs
+lazb <- species_changes_all %>% 
+  filter(species == "Lazuli Bunting") %>% 
+  select(Region, Percent_Change, Start_year)
+
+wide_lazb <- pivot_wider(
+  data = lazb,
+  names_from = Region,
+  values_from = Percent_Change
+)
+
+lazb_precip <- merge(wide_lazb, regional.prcp.dat)
+
+
+
+
+# merging bbs data with precipitation data --------------------------------
+
+regional.prcp.dat <- read_csv("regional.prcp.dat.2023.csv")
+
+regional.prcp.dat <- regional.prcp.dat %>% 
+  filter(year...1 <= 2021) %>% # was 2018 earlier
+  rename(Start_year = year...1)
+
+prcp.dat <- regional.prcp.dat %>% 
+  select(-contains("ear"))
+
+#scaling all predictor variables
+prcp.dat <- apply(prcp.dat, 2, scale)
+regional.prcp.dat <- data.frame(cbind(regional.prcp.dat$Start_year, prcp.dat))
+
+regional.prcp.dat <- regional.prcp.dat %>% 
+  rename(Start_year = V1)
+
+species_precip <- vector('list')
+
+for(i in unique(species_changes_all$species)){
+  species_dat <- species_changes_all %>% 
+    filter(species == i) %>% 
+    select(Region, Percent_Change, Start_year)
+  
+  wide_species <- pivot_wider(
+    data = species_dat,
+    names_from = Region,
+    values_from = Percent_Change)
+    
+  species_precip[[i]] <- merge(wide_species, regional.prcp.dat)
+  
+}

@@ -192,3 +192,5 @@ for(i in unique(species_changes_all$species)){
   species_precip[[i]] <- merge(wide_species, regional.prcp.dat)
   
 }
+
+saveRDS(species_precip, "bbs,daymet_full.RData")

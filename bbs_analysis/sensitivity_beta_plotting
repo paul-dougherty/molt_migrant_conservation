@@ -1,1 +1,330 @@
-test
+#####* in this script, we make final plots showing beta coefficient estimates for the relationship between
+#####* breeding abundance change and monsoon precipitation/phenology anomalies for sensitive molt-migrant
+#####* and non-molt-migrant populations
+ 
+library(ggplot2)
+library(tidyverse)
+
+# reading in monsoon model iterations
+setwd("/Users/pauldougherty/Documents/Dissertation Research/Molt Migrant Conservation")
+
+monsoon_mod_iterations <- readRDS("bbs_monsoon_mods_iterations.RData")
+
+
+## loading bayesian iteration estimates
+
+# extracting data for each species, specifically mean/median? estimates and credible intervals
+precip_pops <- list()
+phenology_pops <- list()
+interaction_pops <- list()
+
+for(i in 1:length(monsoon_mod_iterations)){
+  species_dat <- monsoon_mod_iterations[[i]]
+  
+  # extracting data for each BCR
+  for(j in unique(names(species_dat))){
+    bcr_dat <- species_dat[[j]]
+    
+    #* if predictors include the string "prcp", then extract species, bcr, and posterior
+    #*  estimate, add it to precip_pops list of populations
+    if(any(grepl("^(?!.*:).*prcp(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+      
+      prcp_cols <- grep("^(?!.*:).*prcp(?!.*:)", bcr_dat[[4]], value = TRUE, perl = TRUE)
+      df <- data.frame(
+        species = bcr_dat[[1]],
+        bcr = bcr_dat[[2]],
+        species.pop = bcr_dat[[3]])#,
+        #beta_posterior =  ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[prcp_cols[1]]], bcr_dat[[11]])
+      #)
+      # if(is.data.frame(bcr_dat[[11]])){
+      #   df$beta_posterior <- bcr_dat[[11]][[prcp_cols[1]]]
+      # } else {
+      #   df$beta_posterior <- bcr_dat[[11]]
+      # }
+      df$pred <- prcp_cols
+      df$beta_estimate <- bcr_dat[[5]][[prcp_cols]]
+      df$beta_lower <- bcr_dat[[6]][[prcp_cols]]
+      df$beta_upper <- bcr_dat[[7]][[prcp_cols]]
+      
+      precip_pops[[length(precip_pops) + 1]] <- df
+      
+    } 
+    
+    if(any(grepl("^(?!.*:).*halfway(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+      
+      halfway_cols <- grep("^(?!.*:).*halfway(?!.*:)", bcr_dat[[4]], value = TRUE, perl = TRUE)
+      df <- data.frame(
+        species = bcr_dat[[1]],
+        bcr = bcr_dat[[2]],
+        species.pop = bcr_dat[[3]])#,
+      #beta_posterior =  ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[prcp_cols[1]]], bcr_dat[[11]])
+      #)
+      # if(is.data.frame(bcr_dat[[11]])){
+      #   df$beta_posterior <- bcr_dat[[11]][[prcp_cols[1]]]
+      # } else {
+      #   df$beta_posterior <- bcr_dat[[11]]
+      # }
+      df$pred <- halfway_cols
+      df$beta_estimate <- bcr_dat[[5]][[halfway_cols]]
+      df$beta_lower <- bcr_dat[[6]][[halfway_cols]]
+      df$beta_upper <- bcr_dat[[7]][[halfway_cols]]
+      
+      phenology_pops[[length(phenology_pops) + 1]] <- df
+      
+    } 
+    
+    if(any(grepl(":", bcr_dat[[4]]))){
+      
+      interaction_cols <- grep(":", bcr_dat[[4]], value = TRUE)
+      df <- data.frame(
+        species = bcr_dat[[1]],
+        bcr = bcr_dat[[2]],
+        species.pop = bcr_dat[[3]])#,
+      #beta_posterior =  ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[prcp_cols[1]]], bcr_dat[[11]])
+      #)
+      # if(is.data.frame(bcr_dat[[11]])){
+      #   df$beta_posterior <- bcr_dat[[11]][[prcp_cols[1]]]
+      # } else {
+      #   df$beta_posterior <- bcr_dat[[11]]
+      # }
+      df$pred <- interaction_cols
+      df$beta_estimate <- bcr_dat[[5]][[interaction_cols]]
+      df$beta_lower <- bcr_dat[[6]][[interaction_cols]]
+      df$beta_upper <- bcr_dat[[7]][[interaction_cols]]
+      
+      interaction_pops[[length(interaction_pops) + 1]] <- df
+    }
+    
+  }
+  
+}
+
+
+precip_pops_all <- do.call(rbind,precip_pops)
+phenology_pops_all <- do.call(rbind,phenology_pops)
+interaction_pops_all <-do.call(rbind,interaction_pops) # don't seem to be any
+precip_pops_all <- precip_pops_all %>% 
+  filter(species != "Northern Rough-winged Swallow") %>% 
+  filter(species != "Orchard Oriole") %>% 
+  filter(species != "Lark Bunting")
+phenology_pops_all <- phenology_pops_all %>% 
+  filter(species != "Northern Rough-winged Swallow")%>% 
+  filter(species != "Orchard Oriole") %>% 
+  filter(species != "Lark Bunting")
+interaction_pops_all <- interaction_pops_all %>% 
+  filter(species != "Northern Rough-winged Swallow")%>% 
+  filter(species != "Orchard Oriole") %>% 
+  filter(species != "Lark Bunting")
+
+# adding scientific names
+species <- unique(precip_pops_all$species)
+
+
+
+# making names of data frame scientific names
+scientific_names <- c("Passerina amoena", "Passerina cyanea",
+                   "Icterus bullockii", "Icterus galbula",
+                   "Pheucticus melanocephalus", "Pheucticus ludovicianus",
+                   "Myiarchus cinerascens", "Myiarchus crinitus",
+                   "Piranga ludoviciana", "Vireo gilvus",
+                   "Spinus psaltria", "Spinus tristis",
+                   "Oreothlypis luciae",
+                   "Tyrannus verticalis", "Tyrannus tyrannus",
+                   "Passerina ciris",
+                   "Spizella passerina", "Chondestes grammacus",
+                   "Anthus spragueii", "Anthus rubescens",
+                   "Empidonax wrightii", "Empidonax oberholseri")
+                   
+name_conversion <- data.frame(species, scientific_names)
+
+precip_pops_all <- merge(precip_pops_all, name_conversion)
+phenology_pops_all <- merge(phenology_pops_all, name_conversion)
+interaction_pops_all <- merge(interaction_pops_all, name_conversion)
+
+# precip_pops_all$species.pop <- 
+#   paste(precip_pops_all$scientific_names, precip_pops_all$bcr)
+# phenology_pops_all$species.pop <- 
+#   paste(phenology_pops_all$scientific_names, phenology_pops_all$bcr)
+# interaction_pops_all$species.pop <- 
+#   paste(interaction_pops_all$scientific_names, interaction_pops_all$bcr)
+
+### separating molt-migrants and non-molt-migrants
+molt_migrants <- c("Lazuli Bunting", "Bullock's Oriole", "Black-headed Grosbeak", 
+                   "Ash-throated Flycatcher", "Western Tanager", "Lesser Goldfinch",
+                   "Lucy's Warbler", "Western Kingbird", "Sprague's Pipit", "Gray Flycatcher") # removed Lark Bunting
+pabu_mm_bcrs <- c("BCR18", "BCR19", "BCR20", "BCR21", "BCR22", "BCR35", "BCR36")
+western_mm_bcrs <- c("BCR5", "BCR9", "BCR10", "BCR15", "BCR16", "BCR32", "BCR33", "BCR34")
+
+# for precip pops
+precip_pops_all$molt_migrant <- ifelse(precip_pops_all$species %in% molt_migrants, TRUE, ifelse(
+  precip_pops_all$species == "Painted Bunting" &
+    precip_pops_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      precip_pops_all$species == "Warbling Vireo" &
+        precip_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          precip_pops_all$species == "Chipping Sparrow" &
+            precip_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              precip_pops_all$species == "Lark Sparrow" &
+                precip_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+                  precip_pops_all$species == "Northern Rough-winged Swallow" &
+                    precip_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    )))
+
+precip_pops_all_mm <- precip_pops_all %>% 
+  filter(molt_migrant == TRUE)
+precip_pops_all_nmm <- precip_pops_all %>% 
+  filter(molt_migrant == FALSE)
+
+
+# for phenology pops
+phenology_pops_all$molt_migrant <- ifelse(phenology_pops_all$species %in% molt_migrants, TRUE, ifelse(
+  phenology_pops_all$species == "Painted Bunting" &
+    phenology_pops_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      phenology_pops_all$species == "Warbling Vireo" &
+        phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          phenology_pops_all$species == "Chipping Sparrow" &
+            phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              phenology_pops_all$species == "Lark Sparrow" &
+                phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+                  phenology_pops_all$species == "Northern Rough-winged Swallow" &
+                    phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    )))
+
+phenology_pops_all_mm <- phenology_pops_all %>% 
+  filter(molt_migrant == TRUE)
+phenology_pops_all_nmm <- phenology_pops_all %>% 
+  filter(molt_migrant == FALSE)
+
+
+# for interaction pops
+interaction_pops_all$molt_migrant <- ifelse(interaction_pops_all$species %in% molt_migrants, TRUE, ifelse(
+  interaction_pops_all$species == "Painted Bunting" &
+    interaction_pops_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      interaction_pops_all$species == "Warbling Vireo" &
+        interaction_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          interaction_pops_all$species == "Chipping Sparrow" &
+            interaction_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              interaction_pops_all$species == "Lark Sparrow" &
+                interaction_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+                  interaction_pops_all$species == "Northern Rough-winged Swallow" &
+                    interaction_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    )))
+
+interaction_pops_all_mm <- interaction_pops_all %>% 
+  filter(molt_migrant == TRUE)
+interaction_pops_all_nmm <- interaction_pops_all %>% 
+  filter(molt_migrant == FALSE)
+
+
+library(ggtext)
+library(glue)
+
+
+
+
+
+# plotting both together
+
+mm_precip_pops_plot <- precip_pops_all_mm %>% mutate(
+  name = glue("*{scientific_names}* ({bcr})"),
+  name = fct_reorder(name, beta_estimate)
+) %>%
+  ggplot(aes(y = name, x = beta_estimate, xmin = beta_lower, xmax = beta_upper)) + 
+  geom_vline(xintercept = 0, colour = gray(1/2), lty = 2, linewidth = 1) +
+  geom_errorbarh(height=.2, linewidth = 1) +
+  geom_point(position = position_dodge(width = 1/2),
+             shape = 21, fill = "WHITE", size = 2) +
+  #geom_col() + coord_flip() +
+  #geom_errorbarh(height=.2) +
+  theme_bw() +
+  theme(axis.text.y = element_markdown(),
+        #axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  #geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = expression(""* beta * " estimate")) + 
+  ggtitle("Molt-migrants")
+
+nmm_precip_pops_plot <- precip_pops_all_nmm %>% mutate(
+  name = glue("*{scientific_names}* ({bcr})"),
+  name = fct_reorder(name, beta_estimate)
+) %>%
+  ggplot(aes(y = name, x = beta_estimate, xmin = beta_lower, xmax = beta_upper)) + 
+  geom_vline(xintercept = 0, colour = gray(1/2), lty = 2, linewidth = 1) +
+  geom_errorbarh(height=.2, linewidth = 1) +
+  geom_point(position = position_dodge(width = 1/2),
+             shape = 21, fill = "WHITE", size = 2) +
+  #geom_col() + coord_flip() +
+  #geom_errorbarh(height=.2) +
+  theme_bw() +
+  theme(axis.text.y = element_markdown(),
+        #axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  #geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = expression(""* beta * " estimate")) + 
+  ggtitle("Non-molt-migrants")
+
+library(gridExtra)
+
+vertical_line <- ggplot() +
+  geom_vline(xintercept = 1, size = 0.5, color = "black") +  # Black solid line
+  theme_void()
+
+grid.arrange(mm_precip_pops_plot, vertical_line, nmm_precip_pops_plot, ncol = 3, widths = c(5, 0.2, 5))
+# for saving the pdf, landscape and dimensions are 8.5 x 12
+
+
+
+### for phenology
+
+mm_phenology_pops_plot <- phenology_pops_all_mm %>% mutate(
+  name = glue("*{scientific_names}* ({bcr})"),
+  name = fct_reorder(name, beta_estimate)
+) %>%
+  ggplot(aes(y = name, x = beta_estimate, xmin = beta_lower, xmax = beta_upper)) + 
+  geom_vline(xintercept = 0, colour = gray(1/2), lty = 2, linewidth = 1) +
+  geom_errorbarh(height=.2, linewidth = 1) +
+  geom_point(position = position_dodge(width = 1/2),
+             shape = 21, fill = "WHITE", size = 2) +
+  #geom_col() + coord_flip() +
+  #geom_errorbarh(height=.2) +
+  theme_bw() +
+  theme(axis.text.y = element_markdown(),
+        #axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  #geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = expression(""* beta * " estimate")) + 
+  ggtitle("Molt-migrants")
+
+nmm_phenology_pops_plot <- phenology_pops_all_nmm %>% mutate(
+  name = glue("*{scientific_names}* ({bcr})"),
+  name = fct_reorder(name, beta_estimate)
+) %>%
+  ggplot(aes(y = name, x = beta_estimate, xmin = beta_lower, xmax = beta_upper)) + 
+  geom_vline(xintercept = 0, colour = gray(1/2), lty = 2, linewidth = 1) +
+  geom_errorbarh(height=.2, linewidth = 1) +
+  geom_point(position = position_dodge(width = 1/2),
+             shape = 21, fill = "WHITE", size = 2) +
+  #geom_col() + coord_flip() +
+  #geom_errorbarh(height=.2) +
+  theme_bw() +
+  theme(axis.text.y = element_markdown(),
+        #axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  #geom_vline(xintercept = 0, linetype="dotted") +
+  labs(y = "Population", x = expression(""* beta * " estimate")) + 
+  ggtitle("Non-molt-migrants")
+
+library(gridExtra)
+
+vertical_line <- ggplot() +
+  geom_vline(xintercept = 1, size = 0.5, color = "black") +  # Black solid line
+  theme_void()
+
+grid.arrange(mm_phenology_pops_plot, vertical_line, nmm_phenology_pops_plot, ncol = 3, widths = c(5, 0.2, 5))
+# for saving the pdf, landscape and dimensions are 8.5 x 12
+

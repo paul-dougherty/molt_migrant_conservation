@@ -6,8 +6,13 @@ All Daymet, eBird, and Breeding Bird Survey Data are available to download at ht
 
 Repository Structure:
 
-precip_data_prep: scripts for downloading and wrangling Daymet precipitation data
-ebird_arrival_mods: scripts for preparing raw eBird data for 
-bbs_data_prep:
-bbs_analysis:
+* precip_data_prep: scripts for downloading and wrangling Daymet precipitation data
+  
+* ebird_arrival_mods: scripts for preparing raw eBird data for
+  
+* bbs_data_prep:
+  * Sub trend_estimating_functions : 
+
+* bbs_analysis:
+
 

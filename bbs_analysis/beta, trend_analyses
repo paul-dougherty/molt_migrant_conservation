@@ -1,0 +1,1393 @@
+#####* In this long script, we first estimate trends for each molt-migrant taxon between 2010-2023 using the trend 
+#####* estimation functions in the "trend_estimating_functions" script, and then model the relationships between
+#####* these trends and the taxon's estimated sensitivity to variaiton in monsoon precipitation volume and phenology
+#####* prevesiously estimated in the "monsoon_bbs_modeling" script, and then plot the results.
+
+
+library(tidyverse)
+library(bbsBayes)
+
+# generating posterior distributions for population trend estimates  -----------------------------
+setwd(".../")
+species_indices <- readRDS("species_indices.RData") # the one that's just on my drive
+## need to remove empty items in the list
+species_indices <- subset(species_indices, names(species_indices) != "")
+
+
+######## testing with custom function that saves posterior draws
+### just estimating trend between 2010 and 2021
+
+## basic difference function
+species_trends_basic <- vector('list')
+#for (species in unique(bird.meta$full_name)){
+for (i in names(species_indices)){
+  print(i)
+  
+  ### we want a nested list for each species
+  #year_changes <- vector('list')
+  #for (i in unique(c(min_year:max_year))){
+  #for (j in year_vector){
+  
+  species_trends_basic[[i]] <- generate_posterior_prop_changes(indices = species_indices[[i]],
+                                                         Min_year = 2010,
+                                                         Max_year = 2021)
+
+}
+
+
+## slope function
+species_trends_slope <- vector('list')
+#for (species in unique(bird.meta$full_name)){
+for (i in names(species_indices)){
+  print(i)
+  
+  ### we want a nested list for each species
+  #year_changes <- vector('list')
+  #for (i in unique(c(min_year:max_year))){
+  #for (j in year_vector){
+  
+  species_trends_slope[[i]] <- generate_posterior_prop_changes_slope(indices = species_indices[[i]],
+                                                               Min_year = 2010,
+                                                               Max_year = 2021,
+                                                               slope = TRUE)
+}
+
+species_bcr_counts <- vector()
+for(i in 1:length(species_trends_slope)){
+  species_bcr_counts[[i]] <- length(species_trends_slope[[i]])
+}
+sum(species_bcr_counts) - 9 - 24 - 32 - 155
+
+
+## need to make a dataframe with posterior draws for each bcr-species combo
+species_trends <- vector('list')
+
+#for (species in unique(bird.meta$full_name)){
+for (i in names(species_indices)){
+  print(i)
+  
+  ### we want a nested list for each species
+  #year_changes <- vector('list')
+  #for (i in unique(c(min_year:max_year))){
+  #for (j in year_vector){
+  
+  species_trends[[i]] <- generate_posterior_prop_changes(indices = species_indices[[i]],
+                                                         Min_year = 2010,
+                                                         Max_year = 2021)
+}
+
+
+species_changes <- vector('list')
+for(i in unique(names(species_trends))){
+  
+  bcr_changes <- vector('list')
+  
+    bcrs <- unique(names(species_trends[[i]]))
+    
+    for(j in bcrs){
+      trend_posterior_basic <- species_trends_basic[[i]][[j]][["year_change"]]
+      trend_posterior_slope <- species_trends_slope[[i]][[j]][["year_change"]]
+      
+      bcr_changes[[j]] <- data.frame(
+        species = rep(i, each = 3000),
+        #year = rep(j, each = 3000),
+        bcr = rep(j, each = 3000),
+        trend_basic = trend_posterior_basic,
+        trend_slope = trend_posterior_slope)
+    }
+species_changes[[i]] <- do.call(rbind, bcr_changes)
+}
+species_changes_all <- do.call(rbind, species_changes)
+
+cor(species_changes_all$trend_basic, species_changes_all$trend_slope)
+plot(species_changes_all$trend_basic ~ species_changes_all$trend_slope)
+
+
+
+##* ok, so now we have trend data for each population frm 2010 to 2021. Now we need to 
+##* model trend as the function of beta coefficients from yc ~ monsoon precip models
+##* 
+##* 1) filter down to just molt-migrant populations 
+##* 2) plot trend as a function of beta estimate for monsoon precip
+##* 3) plot trend as a function of beta estimate for monsoon phenology
+##* 4) plot trend as a function of beta estimate for interactions between precip and phenology
+
+
+
+# extracting posterior distributions of beta coefficients from bbs yc ~ monsoon precip models  -----------------------------
+
+# reading in monsoon model iterations
+setwd("/Users/pauldougherty/Documents/Dissertation Research/Molt Migrant Conservation")
+
+monsoon_mod_iterations <- readRDS("bbs_monsoon_mods_iterations.RData")
+
+# extracting posterior estimate for beta coefficient for monsoon precip
+precip_pops <- list()
+phenology_pops <- list()
+interaction_pops <- list()
+
+# # extracting data for each species
+# for(i in 1:length(monsoon_mod_iterations)){
+#   species_dat <- monsoon_mod_iterations[[i]]
+#   
+#   # extracting data for each BCR
+#   for(j in unique(names(species_dat))){
+#     bcr_dat <- species_dat[[j]]
+#     
+#     #* if predictors include the string "prcp", then extract species, bcr, and posterior
+#     #*  estimate, add it to precip_pops list of populations
+#     if(any(grepl("prcp(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+#       
+#       prcp_cols <- grep("prcp(?!.*:)", names(bcr_dat[[11]]), value = TRUE, perl = TRUE)
+#       df <- data.frame(
+#         species = rep(bcr_dat[[1]], each = 3000),
+#         bcr = rep(bcr_dat[[2]], each = 3000)#,
+#         #beta_posterior =  ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[prcp_cols[1]]], bcr_dat[[11]])
+#       )
+#       if(is.data.frame(bcr_dat[[11]])){
+#         df$beta_posterior <- bcr_dat[[11]][[prcp_cols[1]]]
+#       } else {
+#         df$beta_posterior <- bcr_dat[[11]]
+#       }
+#       
+#       precip_pops[[length(precip_pops) + 1]] <- df
+#       
+#     } else if(any(grepl("halfway(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+#       
+#       halfway_cols <- grep("halfway(?!.*:)", names(bcr_dat[[11]]), value = TRUE, perl = TRUE)
+#       df <- data.frame(
+#         species = rep(bcr_dat[[1]], each = 3000),
+#         bcr = rep(bcr_dat[[2]], each = 3000) #,
+#         #beta_posterior = ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[halfway_cols[1]]], bcr_dat[[11]])
+#       )
+#       if(is.data.frame(bcr_dat[[11]])){
+#         df$beta_posterior <- bcr_dat[[11]][[halfway_cols[1]]]
+#       } else {
+#         df$beta_posterior <- bcr_dat[[11]]
+#       }
+#       
+#       phenology_pops[[length(phenology_pops) + 1]] <- df
+#       
+#     } else{
+#       
+#       interaction_cols <- grep(":", names(bcr_dat[[11]]), value = TRUE)
+#       df <- data.frame(
+#         species = rep(bcr_dat[[1]], each = 3000),
+#         bcr = rep(bcr_dat[[2]], each = 3000)#,
+#         #beta_posterior = ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[interaction_cols[1]]], bcr_dat[[11]])
+#       )
+#       if(is.data.frame(bcr_dat[[11]])){
+#         df$beta_posterior <- bcr_dat[[11]][[interaction_cols[1]]]
+#       } else {
+#         df$beta_posterior <- bcr_dat[[11]]
+#       }
+#       
+#       interaction_pops[[length(precip_pops) + 1]] <- df
+#     }
+#     
+#   }
+#   
+# }
+
+for(i in 1:length(monsoon_mod_iterations)){
+  species_dat <- monsoon_mod_iterations[[i]]
+  
+  # extracting data for each BCR
+  for(j in unique(names(species_dat))){
+    bcr_dat <- species_dat[[j]]
+    
+    #* if predictors include the string "prcp", then extract species, bcr, and posterior
+    #*  estimate, add it to precip_pops list of populations
+    if(any(grepl("^(?!.*:).*prcp(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+      
+      prcp_cols <- grep("^(?!.*:).*prcp(?!.*:)", names(bcr_dat[[11]]), value = TRUE, perl = TRUE)
+      df <- data.frame(
+        species = rep(bcr_dat[[1]], each = 3000),
+        bcr = rep(bcr_dat[[2]], each = 3000)#,
+        #beta_posterior =  ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[prcp_cols[1]]], bcr_dat[[11]])
+      )
+      if(is.data.frame(bcr_dat[[11]])){
+        df$beta_posterior <- bcr_dat[[11]][[prcp_cols[1]]]
+      } else {
+        df$beta_posterior <- bcr_dat[[11]]
+      }
+      
+      precip_pops[[length(precip_pops) + 1]] <- df
+      
+    } 
+    
+    if(any(grepl("^(?!.*:).*halfway(?!.*:)", bcr_dat[[4]], perl = TRUE))){
+      
+      halfway_cols <- grep("^(?!.*:).*halfway(?!.*:)", names(bcr_dat[[11]]), value = TRUE, perl = TRUE)
+      df <- data.frame(
+        species = rep(bcr_dat[[1]], each = 3000),
+        bcr = rep(bcr_dat[[2]], each = 3000) #,
+        #beta_posterior = ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[halfway_cols[1]]], bcr_dat[[11]])
+      )
+      if(is.data.frame(bcr_dat[[11]])){
+        df$beta_posterior <- bcr_dat[[11]][[halfway_cols[1]]]
+      } else {
+        df$beta_posterior <- bcr_dat[[11]]
+      }
+      
+      phenology_pops[[length(phenology_pops) + 1]] <- df
+      
+    } 
+    
+    if(any(grepl(":", bcr_dat[[4]]))){
+      
+      interaction_cols <- grep(":", names(bcr_dat[[11]]), value = TRUE)
+      df <- data.frame(
+        species = rep(bcr_dat[[1]], each = 3000),
+        bcr = rep(bcr_dat[[2]], each = 3000)#,
+        #beta_posterior = ifelse(is.data.frame(bcr_dat[[11]]), bcr_dat[[11]][[interaction_cols[1]]], bcr_dat[[11]])
+      )
+      if(is.data.frame(bcr_dat[[11]])){
+        df$beta_posterior <- bcr_dat[[11]][[interaction_cols[1]]]
+      } else {
+        df$beta_posterior <- bcr_dat[[11]]
+      }
+      
+      interaction_pops[[length(interaction_pops) + 1]] <- df
+    }
+    
+  }
+  
+}
+
+
+## combining all three lists into single dataframes
+
+precip_pops_all <- do.call(rbind,precip_pops)
+phenology_pops_all <- do.call(rbind,phenology_pops)
+interaction_pops_all <-do.call(rbind,interaction_pops) # don't seem to be any
+
+
+# filtering down datasets to include only molt-migrants -----------------------------
+
+molt_migrants <- c("Lazuli Bunting", "Bullock's Oriole", "Black-headed Grosbeak", 
+                   "Ash-throated Flycatcher", "Western Tanager", "Lesser Goldfinch",
+                   "Lucy's Warbler", "Western Kingbird", "Sprague's Pipit", "Gray Flycatcher") # removed Lark Bunting
+pabu_mm_bcrs <- c("BCR18", "BCR19", "BCR20", "BCR21", "BCR22", "BCR35", "BCR36")
+western_mm_bcrs <- c("BCR5", "BCR9", "BCR10", "BCR15", "BCR16", "BCR32", "BCR33", "BCR34")
+
+# for precip pops
+precip_pops_all$molt_migrant <- ifelse(precip_pops_all$species %in% molt_migrants, TRUE, ifelse(
+  precip_pops_all$species == "Painted Bunting" &
+    precip_pops_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      precip_pops_all$species == "Warbling Vireo" &
+        precip_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          precip_pops_all$species == "Chipping Sparrow" &
+            precip_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              precip_pops_all$species == "Lark Sparrow" &
+                precip_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+                  #precip_pops_all$species == "Northern Rough-winged Swallow" &
+                    #precip_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    ))
+
+precip_pops_all_mm <- precip_pops_all %>% 
+  filter(molt_migrant == TRUE)
+
+
+# for phenology pops
+phenology_pops_all$molt_migrant <- ifelse(phenology_pops_all$species %in% molt_migrants, TRUE, ifelse(
+  phenology_pops_all$species == "Painted Bunting" &
+    phenology_pops_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      phenology_pops_all$species == "Warbling Vireo" &
+        phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          phenology_pops_all$species == "Chipping Sparrow" &
+            phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              phenology_pops_all$species == "Lark Sparrow" &
+                phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+                  #phenology_pops_all$species == "Northern Rough-winged Swallow" &
+                    #phenology_pops_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    ))
+
+phenology_pops_all_mm <- phenology_pops_all %>% 
+  filter(molt_migrant == TRUE)
+
+
+
+# merging beta estimates with trend estimates -----------------------------
+unique(species_changes_all$bcr)
+# getting rid of continental strata
+species_changes_all <- species_changes_all %>% 
+  filter(bcr != "continental_Continental")
+species_changes_all$bcr <- sub("stratum_", "",species_changes_all$bcr)
+
+species_changes_all$molt_migrant <- ifelse(species_changes_all$species %in% molt_migrants, TRUE, ifelse(
+  species_changes_all$species == "Painted Bunting" &
+    species_changes_all$bcr %in% pabu_mm_bcrs, TRUE, ifelse(
+      species_changes_all$species == "Warbling Vireo" &
+        species_changes_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+          species_changes_all$species == "Chipping Sparrow" &
+            species_changes_all$bcr %in% western_mm_bcrs, TRUE, ifelse(
+              species_changes_all$species == "Lark Sparrow" &
+                species_changes_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+                  #species_changes_all$species == "Northern Rough-winged Swallow" &
+                    #species_changes_all$bcr %in% western_mm_bcrs, TRUE, FALSE)
+            )
+        )
+    ))
+species_changes_all_mm <- species_changes_all %>% 
+  filter(molt_migrant == TRUE)
+
+# # merging isn't going to work, need to extract each species-BCR combo individually
+# precip_pops_trends <- list()
+# for(i in unique(precip_pops_all_mm$species)){
+#   species_dat <- precip_pops_all_mm %>% 
+#     filter(species == i)
+#   for(j in unique(species_dat$bcr)){
+#     bcr_dat <- species_dat %>% 
+#       filter(bcr == j)
+#     
+#     bcr_trend <- species_changes_all_mm %>% 
+#       filter(species == i) %>% 
+#       filter(bcr == j)
+#     
+#     bcr_betas_trend <- cbind(bcr_dat, bcr_trend)
+#     precip_pops_trends[[length(precip_pops_trends)+1]] <- bcr_betas_trend
+#     
+#   }
+# }
+# precip_pops_trends_final <- do.call(rbind, precip_pops_trends)
+# plot(precip_pops_trends_final$trend_slope ~ precip_pops_trends_final$beta_posterior)
+# plot(precip_pops_trends_final$trend_slope ~ precip_pops_trends_final$trend_basic)
+# unique(precip_pops_trends_final$species)
+### hmm should probably remove NRWS and look only at declining species?
+## also maybe try coloring points by BCR and by species?
+
+### need to merge them in such a way so that we get NAs for species/bcr combos that aren't sensitive
+precip_pops_all_mm # precip mod results
+species_changes_all_mm # bbs data trends results
+dim(precip_pops_all_mm)
+dim(species_changes_all_mm) # final dataset should be this long
+
+# merging isn't going to work, need to extract each species-BCR combo individually
+precip_pops_trends <- list()
+for(i in unique(species_changes_all_mm$species)){
+  species_dat <- species_changes_all_mm %>% 
+    filter(species == i)
+  for(j in unique(species_dat$bcr)){
+    bcr_dat <- species_dat %>% 
+      filter(bcr == j)
+    
+    if (any(precip_pops_all_mm$species == i & precip_pops_all_mm$bcr == j)){
+      
+      bcr_trend <- precip_pops_all_mm %>% 
+        filter(species == i) %>% 
+        filter(bcr == j)
+      
+      bcr_dat$beta_posterior <- bcr_trend$beta_posterior
+    }
+    
+    else {
+      
+      bcr_dat$beta_posterior <- rep(NA, 3000) 
+    }
+    
+    #bcr_betas_trend <- cbind(bcr_dat, bcr_trend)
+    precip_pops_trends[[length(precip_pops_trends)+1]] <- bcr_dat
+    
+  }
+}
+precip_pops_trends_final <- do.call(rbind, precip_pops_trends) # ok it seems to have worked
+dim(precip_pops_trends_final)
+plot(precip_pops_trends_final$trend_slope ~ precip_pops_trends_final$beta_posterior)
+plot(precip_pops_trends_final$trend_slope ~ precip_pops_trends_final$trend_basic)
+unique(precip_pops_trends_final$species)
+
+
+# for phenology
+# phenology_pops_trends <- list()
+# for(i in unique(phenology_pops_all_mm$species)){
+#   species_dat <- phenology_pops_all_mm %>% 
+#     filter(species == i)
+#   for(j in unique(species_dat$bcr)){
+#     bcr_dat <- species_dat %>% 
+#       filter(bcr == j)
+#     
+#     bcr_trend <- species_changes_all_mm %>% 
+#       filter(species == i) %>% 
+#       filter(bcr == j)
+#     
+#     bcr_betas_trend <- cbind(bcr_dat, bcr_trend)
+#     phenology_pops_trends[[length(phenology_pops_trends)+1]] <- bcr_betas_trend
+#     
+#   }
+# }
+# phenology_pops_trends_final <- do.call(rbind, phenology_pops_trends)
+# plot(phenology_pops_trends_final$trend_slope ~ phenology_pops_trends_final$beta_posterior)
+# plot(phenology_pops_trends_final$trend_slope ~ phenology_pops_trends_final$trend_basic)
+# unique(phenology_pops_trends_final$species)
+### hmm should probably remove NRWS and look only at declining species?
+## also maybe try coloring points by BCR and by species?
+## should see what that group of really high estimates is
+## definitely need to remove lark bunting from both datasets
+
+phenology_pops_all_mm # precip mod results
+species_changes_all_mm # bbs data trends results
+dim(phenology_pops_all_mm)
+dim(species_changes_all_mm) # final dataset should be this long
+
+phenology_pops_trends <- list()
+for(i in unique(species_changes_all_mm$species)){
+  species_dat <- species_changes_all_mm %>% 
+    filter(species == i)
+  for(j in unique(species_dat$bcr)){
+    bcr_dat <- species_dat %>% 
+      filter(bcr == j)
+    
+    if (any(phenology_pops_all_mm$species == i & phenology_pops_all_mm$bcr == j)){
+      
+      bcr_trend <- phenology_pops_all_mm %>% 
+        filter(species == i) %>% 
+        filter(bcr == j)
+      
+      bcr_dat$beta_posterior <- bcr_trend$beta_posterior
+    }
+    
+    else {
+      
+      bcr_dat$beta_posterior <- rep(NA, 3000) 
+    }
+    
+    #bcr_betas_trend <- cbind(bcr_dat, bcr_trend)
+    phenology_pops_trends[[length(phenology_pops_trends)+1]] <- bcr_dat
+    
+  }
+}
+
+phenology_pops_trends_final <- do.call(rbind, phenology_pops_trends) # ok it seems to have worked
+dim(phenology_pops_trends_final)
+plot(phenology_pops_trends_final$trend_slope ~ phenology_pops_trends_final$beta_posterior)
+plot(phenology_pops_trends_final$trend_slope ~ phenology_pops_trends_final$trend_basic)
+unique(phenology_pops_trends_final$species)
+
+
+########## ok from here you can skip ahead to the final analyses section if you want
+
+
+
+# playing around with different stuff -------------------------------------
+
+
+### first, coloring points by species
+plot(precip_pops_trends_final$trend_slope ~ precip_pops_trends_final$beta_posterior)
+
+
+plot(trend_slope ~ beta_posterior, data = precip_pops_trends_final, 
+     col = as.factor(species), pch= 19, cex = .5)
+legend("topright", legend = levels(as.factor(precip_pops_trends_final$species)), 
+       col = 1:length(levels(as.factor(precip_pops_trends_final$species))), 
+       pch = 19)
+# looking at one species at a time
+precip_pops_trends_final <- precip_pops_trends_final[, !duplicated(names(precip_pops_trends_final))]
+
+for(i in unique(precip_pops_trends_final$species)){
+  species_dat <- precip_pops_trends_final %>% 
+    filter(species == i)
+  
+  plot(trend_slope ~ beta_posterior, data = species_dat, pch= 19, cex = .5, main = i, col = as.factor(bcr))
+}
+
+# for phenology pops
+plot(phenology_pops_trends_final$trend_slope ~ phenology_pops_trends_final$beta_posterior)
+plot(trend_slope ~ beta_posterior, data = phenology_pops_trends_final)
+
+phenology_pops_trends_final <- phenology_pops_trends_final[, !duplicated(names(phenology_pops_trends_final))]
+for(i in unique(phenology_pops_trends_final$species)){
+  species_dat <- phenology_pops_trends_final %>% 
+    filter(species == i)
+  
+  plot(trend_slope ~ beta_posterior, data = species_dat, pch= 19, cex = .5, main = i, col = as.factor(bcr))
+}
+
+
+
+### coloring points by BCR
+
+### filter down to one bcr at a time
+
+### filter down to one species at a time
+
+
+# ok, now actually running models -----------------------------------------
+
+
+lm(trend ~ beta_estimate) # try adding random effect for species and BCR?
+
+## hierarchical structure of data, try having bcrs nested within species and species nested within bcrs
+library(lme4)
+library(brms)
+
+precip_mod <- lm(trend_slope ~ beta_posterior, data = precip_pops_trends_final)
+precip_mod <- lmer(trend_slope ~ beta_posterior + (1 | species/bcr), data = precip_pops_trends_final)
+precip_mod <- brm(trend_slope ~ beta_posterior + (1 | species/bcr),
+                           data = precip_pops_trends_final,
+                           family = gaussian(),  # Assuming a normal distribution of the trend
+                           prior = c(set_prior("normal(0, 5)", class = "b"),
+                                     set_prior("student_t(3, 0, 10)", class = "sd")),
+                           iter = 4000, warmup = 1000, chains = 4, cores = 4)
+summary(precip_mod)
+
+phenology_mod <- lm(trend_slope ~ beta_posterior, data = phenology_pops_trends_final)
+phenology_mod <- lmer(trend_slope ~ beta_posterior + (1 | species/bcr), data = phenology_pops_trends_final)
+phenology_mod <- brm(trend_slope ~ beta_posterior + (1 | species/bcr),
+                     data = phenology_pops_trends_final,
+                     family = gaussian(),  # Assuming a normal distribution of the trend
+                     prior = c(set_prior("normal(0, 5)", class = "b"),
+                               set_prior("student_t(3, 0, 10)", class = "sd")),
+                     iter = 4000, warmup = 1000, chains = 4, cores = 4)
+summary(phenology_mod)
+
+
+# merging two datasets to see if theres an interaction
+interaction_mod 
+
+precip_pops_trends_final
+phenology_pops_trends_final
+
+# renaming columns so can merge the two datasets
+precip_pops_trends_final <- precip_pops_trends_final %>% 
+  rename(precip_beta = beta_posterior)
+phenology_pops_trends_final <- phenology_pops_trends_final %>% 
+  rename(phenology_beta = beta_posterior)
+
+pops_trends_final_both <- merge(precip_pops_trends_final, phenology_pops_trends_final, 
+                                by = c("species", "bcr")) # no bcrs with both? check this
+
+unique(precip_pops_trends_final[, c("species", "bcr")])
+unique(phenology_pops_trends_final[, c("species", "bcr")])
+
+
+
+
+# now just looking at declining populations -------------------------------
+
+# filtering down to species that have mean/median posterior trend estimates that are less than zero
+precip_ag <- aggregate(trend_slope ~ species + bcr, data = precip_pops_trends_final, median)
+hist(precip_ag$trend_slope)
+precip_ag <- precip_ag %>% 
+  rename(trend_slope_mean = trend_slope)
+precip_pops_trends_final <- merge(precip_pops_trends_final, precip_ag, 
+                                by = c("species", "bcr"))
+
+
+phenology_ag <- aggregate(trend_slope ~ species + bcr, data = phenology_pops_trends_final, median)
+hist(phenology_ag$trend_slope) ## should try both of these with basic and slope version of trend
+phenology_ag <- phenology_ag %>% 
+  rename(trend_slope_mean = trend_slope)
+phenology_pops_trends_final <- merge(phenology_pops_trends_final, phenology_ag, 
+                                  by = c("species", "bcr"))
+
+# whoops, these are medians, not means
+precip_pops_trends_final <- precip_pops_trends_final %>% 
+  rename(trend_slope_median = trend_slope_mean)
+phenology_pops_trends_final <- phenology_pops_trends_final %>% 
+  rename(trend_slope_median = trend_slope_mean)
+
+precip_pops_declining <- precip_pops_trends_final %>% 
+  filter(trend_slope_median <= 0)
+phenology_pops_declining <- phenology_pops_trends_final %>% 
+  filter(trend_slope_median <= 0)
+
+plot(precip_pops_declining$trend_slope ~ precip_pops_declining$precip_beta) # maybe get rid of that populations with big spread in posterior estimates? check Rhat values
+plot(phenology_pops_declining$trend_slope ~ phenology_pops_declining$phenology_beta)
+
+precip_mod <- lm(trend_slope ~ precip_beta, data = precip_pops_declining)
+precip_mod <- lmer(trend_slope ~ precip_beta + (1 | species/bcr), data = precip_pops_declining)
+summary(precip_mod)
+
+phenology_mod <- lm(trend_slope ~ phenology_beta, data = phenology_pops_declining)
+phenology_mod <- lmer(trend_slope ~ phenology_beta + (1 | species/bcr), data = phenology_pops_declining)
+summary(phenology_mod)
+
+###
+
+## also modeling if more flexible species are less likely to be declining/sensitive to variation in monsoon phenology
+
+
+## for phenology, need to remove populations that have a positive relationship?
+
+
+
+## maybe populations coming from farther north are better off when the monsoon is late?
+
+
+
+## maybe test to see if declining species are more likely to have negative beta values!!
+## also if flexible species are less likely to be declining
+
+## getting median beta estimate for each population
+precip_ag_beta <- aggregate(precip_beta ~ species + bcr, data = precip_pops_trends_final, median)
+hist(precip_ag_beta$precip_beta)
+
+dim(precip_ag)
+dim(precip_ag_beta)
+## merging median trend and beta estimates data
+precip_ag_both <- merge(precip_ag, precip_ag_beta)
+plot(trend_slope_mean ~ precip_beta, data = precip_ag_both) # promising!!
+
+
+phenology_ag_beta <- aggregate(phenology_beta ~ species + bcr, data = phenology_pops_trends_final, median)
+hist(phenology_ag_beta$phenology_beta)
+
+dim(phenology_ag)
+dim(phenology_ag_beta)
+## merging median trend and beta estimates data
+phenology_ag_both <- merge(phenology_ag, phenology_ag_beta)
+plot(trend_slope_mean ~ phenology_beta, data = phenology_ag_both) # hmm maybe nothing here, but could be parsed more to include geography?
+
+## need to add all other populations without significant predictors
+
+# the full bbs trend dataset, including populations without significant relationships with monsoon variation
+species_changes_all_mm
+
+## estimating median slope trend for each population in the full bbs dataset 
+species_changes_all_mm_ag <- aggregate(trend_slope ~ species + bcr, data = species_changes_all_mm, median)
+hist(species_changes_all_mm_ag$trend_slope)
+species_changes_all_mm_ag <- species_changes_all_mm_ag %>% 
+  rename(trend_slope_median = trend_slope)
+
+## now adding these values to the full bbs dataset
+# merging changese all dataframe with beta dataframe, if beta dataframe doesn't have a value for a species-bcr pair, then give it a 0 beta estimate
+
+# Merge the dataframes by id1 and id2
+species_changes_all_mm_ag_precip <- merge(species_changes_all_mm_ag, precip_ag_beta, by = c("species", "bcr"), all.x = TRUE)
+# Replace NA values in the second dataframe's columns with 0
+species_changes_all_mm_ag_precip[is.na(species_changes_all_mm_ag_precip)] <- 0
+hist(species_changes_all_mm_ag_precip$precip_beta)
+
+## 1) see if insensitive species are less likely to be declining
+species_changes_all_mm_ag_precip$trend <- ifelse(
+  species_changes_all_mm_ag_precip$trend_slope_median < 0, "declining", "stable")
+plot(species_changes_all_mm_ag_precip$precip_beta ~ species_changes_all_mm_ag_precip$trend)
+
+
+plot(trend_slope_median ~ precip_beta, data = species_changes_all_mm_ag_precip) # promising!!
+
+## want to see if sensitive species are more likely to decline
+
+## 2) it definitely appears that of the populations most sensitive to variation in precip, the populations most sensitive are declining the most
+## also, less strong of a relationship, but appears that populations most sensitive to deviations in phenology are declining the most rapidly
+
+
+
+
+# final analyses: ---------------------------------------------------------
+## see if sensitive species are more likely to decline
+
+## for sensitive species, see if there is a relationship between beta estimate and trend
+# to do this, run 3,000 linear regressions, each with a different posterior draw and save the estimated beta coefficient for each
+precip_pops_trends_final
+phenology_pops_trends_final
+
+View(precip_pops_trends_final) 
+
+#* for each unique combination of species and bcrs, select one posterior draw from the 
+#* trend estimate and the beta estimate. Then run a linear regression and save the output. Maybe a GAM?
+precip_model_outputs <- vector('list')
+#bcr_plotting_data <- vector('list')
+
+for(i in 1:3000){
+  
+  species_rows <- vector('list')
+
+  for(j in unique(precip_pops_trends_final$species)){
+    # filter down to data for just the species
+    species_dat <- precip_pops_trends_final %>% 
+      filter(species == j)
+    
+    bcr_rows <- vector('list')
+
+    for(k in unique(species_dat$bcr)){
+      bcr_dat <- species_dat %>% 
+        filter(bcr == k)
+
+      
+      # saving the predictor and response variables from each row for a linear regression
+      bcr_one_row <- data.frame(
+      species = bcr_dat[i,]$species,
+      bcr = bcr_dat[i,]$bcr,
+      beta_posterior = bcr_dat[i,]$beta_posterior,
+      trend_slope = bcr_dat[i,]$trend_slope)
+      
+      bcr_rows[[k]] <- bcr_one_row
+      
+    }
+    species_rows[[j]] <- do.call(rbind, bcr_rows)
+  }
+  species_bcrs_rows_all <- do.call(rbind, species_rows)
+
+  ##* I guess first estimate if a population is declining or not based on particular 
+  ##* posterior draw, rather than posterior median/mean
+  
+  ## adding a column for whether or not the population is declining
+  species_bcrs_rows_all$declining <- ifelse(
+    species_bcrs_rows_all$trend_slope < 0, TRUE, FALSE)
+  
+  species_bcrs_rows_all$sensitive <- ifelse(
+    is.na(species_bcrs_rows_all$beta_posterior), FALSE, TRUE)
+  
+  ### running one of 3000 models
+  
+  # first, running a binomial glm to see if sensitive species are more likely to decline
+#  m1_bin_rando <- glmer(declining ~ sensitive + (1 | bcr), data = species_bcrs_rows_all, family = binomial)
+  m1_bin <- glm(declining ~ sensitive, data = species_bcrs_rows_all, family = binomial)
+  #summary(m1_bin)
+  #plot(m1_bin)
+  #coef(m1_bin)
+  # as an alternative to this model, seeing if sensitivity value predicts whether or not population is more likely to decline
+#  m1_cont_rando <- glmer(declining ~ beta_posterior + (1 | bcr), data = species_bcrs_rows_all, family = binomial)
+  m1_cont <- glm(declining ~ beta_posterior, data = species_bcrs_rows_all, family = binomial)
+  #summary(m1_cont)
+  #coef(m1_cont)
+  # should also just count the number of declining species that are sensitive and not sensitive
+  declining_sensitive_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE))
+  declining_notsensitive_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == FALSE))
+  stable_sensitive_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == TRUE))
+  stable_notsensitive_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == FALSE))
+  declining_sensitive_pos_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE & beta_posterior > 0))
+  stable_sensitive_pos_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == TRUE & beta_posterior > 0))
+  declining_sensitive_neg_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE & beta_posterior < 0))
+  stable_sensitive_neg_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == TRUE & beta_posterior < 0))
+  
+  
+  # for the second model, seeing if, for sensitive and declining species, extent of the decline is influenced by the extent of sensitivity
+  m2_decl_sens <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE)) # can't have random effect
+  # as an alternative to this model, seeing if, for sensitive species, extent of the decline is influenced by the extent of sensitivity
+#  m2_sens_rando <- lmer(trend_slope ~ beta_posterior + (1 | bcr), data = subset(species_bcrs_rows_all, sensitive == TRUE))
+  m2_sens <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, sensitive == TRUE))
+  # as an alternative to this model, seeing if, for declining populations, extent of the decline is influenced by the extent of sensitivity
+  m2_decl <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE)) # can't have random effect
+  # as an alternative to this model, seeing if, for all populations, extent of the decline is influenced by the extent of sensitivity
+  m2_all <- lm(trend_slope ~ beta_posterior, data = species_bcrs_rows_all) # maybe add some random effects
+  # this one is the most likely, looking at sensitive species with a positive beta coefficient
+  m2_sens_pos <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, sensitive == TRUE & beta_posterior > 0)) # can't have random effect
+  m2_decl_sens_pos <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE & beta_posterior > 0)) # can't have random effect
+
+  
+  #### should aklso maybe try all of this with the trend_slope as the response
+  # lm( data = species_bcrs_rows_all)
+  
+  ## also maybe try filtering down to populations with just negative beta estimates, since those are the conditions that are becoming more frequent?
+
+  ### saving model outputs
+  precip_model_outputs[[i]] <- data.frame(
+    
+    declining_sensitive_count = declining_sensitive_count,
+    declining_notsensitive_count = declining_notsensitive_count,
+    stable_sensitive_count = stable_sensitive_count,
+    stable_notsensitive_count = stable_notsensitive_count,
+    declining_sensitive_pos_count = declining_sensitive_pos_count,
+    stable_sensitive_pos_count = stable_sensitive_pos_count,
+    declining_sensitive_neg_count = declining_sensitive_neg_count,
+    stable_sensitive_neg_count = stable_sensitive_neg_count,
+    
+    
+ #   m1_bin_rando = unique(coef(m1_bin_rando)$bcr[,2]),
+ #   m1_cont_rando = unique(coef(m1_cont_rando)$bcr[,2]),
+    m1_bin = coef(m1_bin)["sensitiveTRUE"],
+    m1_cont = coef(m1_cont)["beta_posterior"],
+    
+    m2_decl_sens = coef(m2_decl_sens)["beta_posterior"],
+ #   m2_sens_rando = unique(coef(m2_sens_rando)$bcr[,2]),
+    m2_sens = coef(m2_sens)["beta_posterior"],
+    m2_decl = coef(m2_decl)["beta_posterior"],
+    m2_all = coef(m2_all)["beta_posterior"],
+    m2_sens_pos = coef(m2_sens_pos)["beta_posterior"],
+    m2_decl_sens_pos = coef(m2_decl_sens_pos)["beta_posterior"]
+ 
+    
+  )
+  
+  # should probably find a way to not include models with random effects when boundary is singular
+  # ...or just not incude any models with random effects since so many seem to be singular
+}
+
+dim(species_bcrs_rows_all)
+dim(unique(precip_pops_trends_final[, c("species", "bcr")])) # dimensions match up, we're getting one draw from each species/bcr combo
+dim(unique(phenology_pops_trends_final[, c("species", "bcr")]))
+
+precip_model_outputs_all <- do.call(rbind, precip_model_outputs) # should have length of 3000
+dim(precip_model_outputs_all)
+#### testing distribution of beta coefficients
+for(i in names(precip_model_outputs_all)){
+  hist(precip_model_outputs_all[,i])
+  
+print(quantile(precip_model_outputs_all[,i], 
+           probs=c(0.025, 0.975)))
+}
+
+
+
+#### testing if proportions are different
+declining_sensitive_draws <- precip_model_outputs_all$declining_sensitive_count
+declining_notsensitive_draws <- precip_model_outputs_all$declining_notsensitive_count
+stable_sensitive_draws <- precip_model_outputs_all$stable_sensitive_count
+stable_notsensitive_draws <- precip_model_outputs_all$stable_notsensitive_count
+
+declining_sensitive_positive_draws <- precip_model_outputs_all$declining_sensitive_pos_count
+stable_sensitive_positive_draws <- precip_model_outputs_all$stable_sensitive_pos_count
+declining_sensitive_negative_draws <- precip_model_outputs_all$declining_sensitive_neg_count
+stable_sensitive_negative_draws <- precip_model_outputs_all$stable_sensitive_neg_count
+
+# testing if sensitive populations are more likely to be declining than non-sensitive populations
+median(declining_sensitive_draws) / (median(declining_sensitive_draws) + median(stable_sensitive_draws))
+median(declining_notsensitive_draws) / (median(declining_notsensitive_draws) + median(stable_notsensitive_draws))
+
+median(declining_sensitive_positive_draws) / (median(declining_sensitive_positive_draws) + median(stable_sensitive_positive_draws))
+median(declining_sensitive_negative_draws) / (median(declining_sensitive_negative_draws) + median(stable_sensitive_negative_draws))
+(median(declining_sensitive_negative_draws) + median(declining_notsensitive_draws)) / 
+  (median(declining_sensitive_negative_draws) + median(declining_notsensitive_draws) + 
+     median(stable_sensitive_negative_draws) + median(stable_notsensitive_draws))
+
+## trying to compare distributions of proportions of declining populations with a plot
+View(precip_model_outputs_all)
+names(precip_model_outputs_all)
+
+# proportion of sensitive populations with positive beta coefficients that are declining
+precip_model_outputs_all$declining_sensitive_pos_prop <- 
+  (precip_model_outputs_all$declining_sensitive_pos_count)/
+  (precip_model_outputs_all$declining_sensitive_pos_count + 
+     precip_model_outputs_all$stable_sensitive_pos_count)
+
+# proportion of not sensitive and sensitive with negative beta coefficients that are decliningg
+precip_model_outputs_all$declining_resilient_prop <- 
+  (precip_model_outputs_all$declining_sensitive_neg_count + 
+     precip_model_outputs_all$declining_notsensitive_count)/
+  (precip_model_outputs_all$declining_sensitive_neg_count + 
+     precip_model_outputs_all$declining_notsensitive_count + 
+     precip_model_outputs_all$stable_notsensitive_count +
+     precip_model_outputs_all$stable_sensitive_neg_count)
+
+hist(precip_model_outputs_all$declining_sensitive_pos_prop)
+hist(precip_model_outputs_all$declining_resilient_prop)
+
+# Create the first histogram
+hist(precip_model_outputs_all$declining_resilient_prop, col=rgb(1, 0, 0, 0.5), # Semi-transparent red color
+     xlim=c(0,1), # Ensure the same x-axis limits
+     xlab="Value", ylab="Frequency", main="Comparison of Two Distributions", 
+     breaks=30)  # Number of bins
+# Overlay the second histogram
+hist(precip_model_outputs_all$declining_sensitive_pos_prop, col=rgb(0, 0, 1, 0.5), add=TRUE, breaks=30) 
+
+### plotting distribution of proportions for real:
+precip_prop_plotting <- precip_model_outputs_all %>%
+  pivot_longer(cols = c(declining_sensitive_pos_prop, declining_resilient_prop), names_to = "variable", values_to = "value")
+
+library(fitdistrplus)    
+parameters <- fitdist(precip_model_outputs_all$declining_sensitive_pos_prop, "beta")
+shape1_pos <- parameters$estimate[["shape1"]]
+shape2_pos <- parameters$estimate[["shape2"]]
+
+parameters <- fitdist(precip_model_outputs_all$declining_resilient_prop, "beta")
+shape1_full <- parameters$estimate[["shape1"]]
+shape2_full <- parameters$estimate[["shape2"]]
+
+# Plot histograms
+ggplot(precip_prop_plotting, aes(x = value, fill = variable)) +
+  geom_histogram(alpha = 0.6, position = "identity", binwidth = 0.01, aes(y=after_stat(density))) +
+  labs(x = "Probability", y = "Density") +
+  theme_minimal() +
+  
+  # Custom colors for histograms
+  scale_fill_manual(values = c("declining_sensitive_pos_prop" = "red", "declining_resilient_prop" = "blue")) +
+  
+  # Custom colors for the Beta distributions
+  scale_color_manual(values = c("Full Beta" = "red", "Pos Beta" = "blue")) +
+  
+  
+  # Add vertical dashed lines for the medians
+  geom_vline(xintercept = median(precip_model_outputs_all$declining_sensitive_pos_prop), linetype = "dashed", color = "black", size = 1) +
+  geom_vline(xintercept = median(precip_model_outputs_all$declining_resilient_prop), linetype = "dashed", color = "black", size = 1) +
+  
+  # approximating as beta distributions
+  stat_function(fun = function(x) dbeta(x, shape1_full, shape2_full), aes (color = "Pos Beta"),
+                size = 1) +
+  stat_function(fun = function(x) dbeta(x, shape1_pos, shape2_pos), aes (color = "Full Beta"),
+                size = 1) +
+  # Remove legends
+  theme(legend.position = "none")
+
+# dimensions for saving pdf: 5.82 x 4.58
+
+# i don't think this is legit
+precip_p_values <- list()
+for(i in 1:3000){
+  test <- prop.test(x = c(declining_sensitive_draws[i], declining_notsensitive_draws[i]), 
+            n = c((declining_sensitive_draws[i] + stable_sensitive_draws[i]), (declining_notsensitive_draws[i] + stable_notsensitive_draws[i])),
+            alternative = "greater")
+  test$p.value
+  precip_p_values[i] <- test$p.value
+}
+precip_p_values_all <- do.call(rbind, precip_p_values)
+mean(precip_p_values_all)
+
+
+# testing if the proportion of declining populations are more likely to be sensitive
+median(declining_sensitive_draws) / (median(declining_sensitive_draws) + median(declining_notsensitive_draws))
+median(stable_sensitive_draws) / (median(stable_sensitive_draws) + median(stable_notsensitive_draws))
+
+precip_p_values <- list()
+for(i in 1:3000){
+  test <- prop.test(x = c(declining_sensitive_draws[i], stable_sensitive_draws[i]), 
+                    n = c((declining_sensitive_draws[i] + declining_notsensitive_draws[i]), (stable_sensitive_draws[i] + stable_notsensitive_draws[i])))
+  test$p.value
+  precip_p_values[i] <- test$p.value
+}
+precip_p_values_all <- do.call(rbind, precip_p_values)
+mean(precip_p_values_all)
+
+
+
+##########* 1) ok, so it seems that sensitive populations are more likely to be declining 
+##########* than nonsensitive populations (the proportion of sensitive species that are declining is 
+##########* higher than the proportion of nonsensitive species that are declining). similarly, the proportion
+##########* of declining species that are sensitive to monsoon conditions is higher than 
+##########* the proportion of stable species that are sensitive.
+##########* 
+##########* it also seems that of declining populations, there is a negative relationship between
+##########* precipitation sensitivity beta coefficient and decline, such that the most severely declining
+##########* species are most sensitive to monsoon precipitation
+
+
+# try with trend_basic instead of trend_slope
+
+
+############## for phenology
+## for sensitive species, see if there is a relationship between beta estimate and trend
+# to do this, run 3,000 linear regressions, each with a different posterior draw and save the estimated beta coefficient for each
+precip_pops_trends_final
+phenology_pops_trends_final
+
+View(phenology_pops_trends_final) 
+View(precip_pops_trends_final)
+
+#* for each unique combination of species and bcrs, select one posterior draw from the 
+#* trend estimate and the beta estimate. Then run a linear regression and save the output. Maybe a GAM?
+phenology_model_outputs <- vector('list')
+gam_results <- vector('list')
+gam_results_declining <- vector('list')
+library(mgcv)
+
+for(i in 1:3000){
+  
+  species_rows <- vector('list')
+  
+  for(j in unique(phenology_pops_trends_final$species)){
+    # filter down to data for just the species
+    species_dat <- phenology_pops_trends_final %>% 
+      filter(species == j)
+    
+    bcr_rows <- vector('list')
+    
+    for(k in unique(species_dat$bcr)){
+      bcr_dat <- species_dat %>% 
+        filter(bcr == k)
+      
+      # saving the predictor and response variables from each row for a linear regression
+      bcr_one_row <- data.frame(
+        species = bcr_dat[i,]$species,
+        bcr = bcr_dat[i,]$bcr,
+        beta_posterior = bcr_dat[i,]$beta_posterior,
+        trend_slope = bcr_dat[i,]$trend_slope)
+      
+      bcr_rows[[k]] <- bcr_one_row
+      
+    }
+    species_rows[[j]] <- do.call(rbind, bcr_rows)
+  }
+  species_bcrs_rows_all <- do.call(rbind, species_rows)
+  
+  ##* I guess first estimate if a population is declining or not based on particular 
+  ##* posterior draw, rather than posterior median/mean
+  
+  ## adding a column for whether or not the population is declining
+  species_bcrs_rows_all$declining <- ifelse(
+    species_bcrs_rows_all$trend_slope < 0, TRUE, FALSE)
+  
+  species_bcrs_rows_all$sensitive <- ifelse(
+    is.na(species_bcrs_rows_all$beta_posterior), FALSE, TRUE)
+  
+  ### running one of 3000 models
+  
+  # first, running a binomial glm to see if sensitive species are more likely to decline
+  #  m1_bin_rando <- glmer(declining ~ sensitive + (1 | bcr), data = species_bcrs_rows_all, family = binomial)
+  m1_bin <- glm(declining ~ sensitive, data = species_bcrs_rows_all, family = binomial)
+  #summary(m1_bin)
+  #plot(m1_bin)
+  #coef(m1_bin)
+  # as an alternative to this model, seeing if sensitivity value predicts whether or not population is more likely to decline
+  #  m1_cont_rando <- glmer(declining ~ beta_posterior + (1 | bcr), data = species_bcrs_rows_all, family = binomial)
+  m1_cont <- glm(declining ~ beta_posterior, data = species_bcrs_rows_all, family = binomial)
+  #summary(m1_cont)
+  #coef(m1_cont)
+  # should also just count the number of declining species that are sensitive and not sensitive
+  declining_sensitive_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE))
+  declining_notsensitive_count <- nrow(subset(species_bcrs_rows_all, declining == TRUE & sensitive == FALSE))
+  stable_sensitive_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == TRUE))
+  stable_notsensitive_count <- nrow(subset(species_bcrs_rows_all, declining == FALSE & sensitive == FALSE))
+  
+  # for the second model, seeing if, for sensitive and declining species, extent of the decline is influenced by the extent of sensitivity
+  m2_decl_sens <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE)) # can't have random effect
+  # as an alternative to this model, seeing if, for sensitive species, extent of the decline is influenced by the extent of sensitivity
+  #  m2_sens_rando <- lmer(trend_slope ~ beta_posterior + (1 | bcr), data = subset(species_bcrs_rows_all, sensitive == TRUE))
+  m2_sens <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, sensitive == TRUE))
+  # as an alternative to this model, seeing if, for declining populations, extent of the decline is influenced by the extent of sensitivity
+  m2_decl <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE)) # can't have random effect
+  # as an alternative to this model, seeing if, for all populatins, extent of the decline is influenced by the extent of sensitivity
+  m2_all <- lm(trend_slope ~ beta_posterior, data = species_bcrs_rows_all) # maybe add some random effects
+  #### should aklso maybe try all of this with the trend_slope as the response
+  # lm( data = species_bcrs_rows_all)
+  m2_sens_pos <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, sensitive == TRUE & beta_posterior > 0))
+  m2_decl_sens_pos <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE & beta_posterior > 0))
+  m2_sens_neg <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, sensitive == TRUE & beta_posterior < 0))
+  m2_decl_sens_neg <- lm(trend_slope ~ beta_posterior, data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE & beta_posterior < 0))
+  
+  # trying to do gams
+  gam_sens <- gam(trend_slope ~ s(beta_posterior, k=3), data = subset(species_bcrs_rows_all, sensitive == TRUE))
+  gam_decl_sens <- gam(trend_slope ~ s(beta_posterior, k=3), data = subset(species_bcrs_rows_all, declining == TRUE & sensitive == TRUE))
+  gam_results[[i]] <- gam_sens
+  gam_results_declining[[i]] <- gam_decl_sens
+  
+  ## also maybe try filtering down to populations with just negative beta estimates, since those are the conditions that are becoming more frequent?
+  
+  ### saving model outputs
+  phenology_model_outputs[[i]] <- data.frame(
+    
+    declining_sensitive_count = declining_sensitive_count,
+    declining_notsensitive_count = declining_notsensitive_count,
+    stable_sensitive_count = stable_sensitive_count,
+    stable_notsensitive_count = stable_notsensitive_count,
+    
+    #   m1_bin_rando = unique(coef(m1_bin_rando)$bcr[,2]),
+    #   m1_cont_rando = unique(coef(m1_cont_rando)$bcr[,2]),
+    m1_bin = coef(m1_bin)["sensitiveTRUE"],
+    m1_cont = coef(m1_cont)["beta_posterior"],
+    
+    m2_decl_sens = coef(m2_decl_sens)["beta_posterior"],
+    #   m2_sens_rando = unique(coef(m2_sens_rando)$bcr[,2]),
+    m2_sens = coef(m2_sens)["beta_posterior"],
+    m2_decl = coef(m2_decl)["beta_posterior"],
+    m2_all = coef(m2_all)["beta_posterior"],
+    m2_sens_pos = coef(m2_sens_pos)["beta_posterior"],
+    m2_decl_sens_pos = coef(m2_decl_sens_pos)["beta_posterior"],
+    m2_sens_neg = coef(m2_sens_neg)["beta_posterior"],
+    m2_decl_sens_neg = coef(m2_decl_sens_neg)["beta_posterior"]
+    
+  )
+  
+  # should probably find a way to not include models with random effects when boundary is singular
+  # ...or just not incude any models with random effects since so many seem to be singular
+}
+
+dim(species_bcrs_rows_all)
+dim(unique(precip_pops_trends_final[, c("species", "bcr")])) # dimensions match up, we're getting one draw from each species/bcr combo
+dim(unique(phenology_pops_trends_final[, c("species", "bcr")]))
+
+phenology_model_outputs_all <- do.call(rbind, phenology_model_outputs) # should have length of 3000
+
+dim(phenology_model_outputs_all)
+#### testing distribution of beta coefficients
+for(i in names(phenology_model_outputs_all)){
+  hist(phenology_model_outputs_all[,i])
+  
+  print(quantile(phenology_model_outputs_all[,i], 
+                 probs=c(0.025, 0.975)))
+}
+
+#### testing if proportions are different
+declining_sensitive_draws <- phenology_model_outputs_all$declining_sensitive_count
+declining_notsensitive_draws <- phenology_model_outputs_all$declining_notsensitive_count
+stable_sensitive_draws <- phenology_model_outputs_all$stable_sensitive_count
+stable_notsensitive_draws <- phenology_model_outputs_all$stable_notsensitive_count
+
+# testing if sensitive populations are more likely to be declining than non-sensitive populations
+median(declining_sensitive_draws) / (median(declining_sensitive_draws) + median(stable_sensitive_draws))
+median(declining_notsensitive_draws) / (median(declining_notsensitive_draws) + median(stable_notsensitive_draws))
+
+
+
+### plotting distributions
+# proportion of sensitive populations with positive beta coefficients that are declining
+phenology_model_outputs_all$declining_sensitive_prop <- 
+  (phenology_model_outputs_all$declining_sensitive_count)/
+  (phenology_model_outputs_all$declining_sensitive_count + 
+     phenology_model_outputs_all$stable_sensitive_count)
+
+# proportion of not sensitive and sensitive with negative beta coefficients that are decliningg
+phenology_model_outputs_all$declining_resilient_prop <- 
+  (phenology_model_outputs_all$declining_notsensitive_count)/
+  (phenology_model_outputs_all$declining_notsensitive_count + 
+     phenology_model_outputs_all$stable_notsensitive_count)
+
+hist(phenology_model_outputs_all$declining_sensitive_prop)
+hist(phenology_model_outputs_all$declining_resilient_prop)
+
+
+
+# Create the first histogram
+hist(phenology_model_outputs_all$declining_resilient_prop, col=rgb(1, 0, 0, 0.5), # Semi-transparent red color
+     xlim=c(0,1), # Ensure the same x-axis limits
+     xlab="Value", ylab="Frequency", main="Comparison of Two Distributions", 
+     breaks=30)  # Number of bins
+# Overlay the second histogram
+hist(phenology_model_outputs_all$declining_sensitive_prop, col=rgb(0, 0, 1, 0.5), add=TRUE, breaks=30) 
+
+### plotting distribution of proportions for real:
+phenology_prop_plotting <- phenology_model_outputs_all %>%
+  pivot_longer(cols = c(declining_sensitive_prop, declining_resilient_prop), names_to = "variable", values_to = "value")
+
+library(fitdistrplus)    
+parameters <- fitdist(phenology_model_outputs_all$declining_sensitive_prop, "beta")
+shape1_pos <- parameters$estimate[["shape1"]]
+shape2_pos <- parameters$estimate[["shape2"]]
+
+parameters <- fitdist(phenology_model_outputs_all$declining_resilient_prop, "beta")
+shape1_full <- parameters$estimate[["shape1"]]
+shape2_full <- parameters$estimate[["shape2"]]
+
+# Plot histograms
+ggplot(phenology_prop_plotting, aes(x = value, fill = variable)) +
+  geom_histogram(alpha = 0.6, position = "identity", binwidth = 0.01, aes(y=after_stat(density))) +
+  labs(x = "Probability", y = "Density") +
+  theme_minimal() +
+  
+  # Custom colors for histograms
+  scale_fill_manual(values = c("declining_sensitive_prop" = "red", "declining_resilient_prop" = "blue")) +
+  
+  # Custom colors for the Beta distributions
+  scale_color_manual(values = c("Full Beta" = "red", "Pos Beta" = "blue")) +
+  
+  
+  # Add vertical dashed lines for the medians
+  geom_vline(xintercept = median(phenology_model_outputs_all$declining_sensitive_prop), linetype = "dashed", color = "black", size = 1) +
+  geom_vline(xintercept = median(phenology_model_outputs_all$declining_resilient_prop), linetype = "dashed", color = "black", size = 1) +
+  
+  # approximating as beta distributions
+  stat_function(fun = function(x) dbeta(x, shape1_full, shape2_full), aes (color = "Pos Beta"),
+                size = 1) +
+  stat_function(fun = function(x) dbeta(x, shape1_pos, shape2_pos), aes (color = "Full Beta"),
+                size = 1) +
+  # Remove legends
+  theme(legend.position = "none")
+
+# dimensions for saving pdf: 5.82 x 4.58
+
+
+
+# don't think this is legit
+precip_p_values <- list()
+for(i in 1:3000){
+  test <- prop.test(x = c(declining_sensitive_draws[i], declining_notsensitive_draws[i]), 
+                    n = c((declining_sensitive_draws[i] + stable_sensitive_draws[i]), (declining_notsensitive_draws[i] + stable_notsensitive_draws[i])))
+  test$p.value
+  precip_p_values[i] <- test$p.value
+}
+precip_p_values_all <- do.call(rbind, precip_p_values)
+mean(precip_p_values_all)
+# try to do this a different way, calculate proportion for each row a time then get mean? or just compare if two groups are different?
+
+# testing if the proportion of declining populations are more likely to be sensitive
+median(declining_sensitive_draws) / (median(declining_sensitive_draws) + median(declining_notsensitive_draws))
+median(stable_sensitive_draws) / (median(stable_sensitive_draws) + median(stable_notsensitive_draws))
+
+precip_p_values <- list()
+for(i in 1:3000){
+  test <- prop.test(x = c(declining_sensitive_draws[i], stable_sensitive_draws[i]), 
+                    n = c((declining_sensitive_draws[i] + declining_notsensitive_draws[i]), (stable_sensitive_draws[i] + stable_notsensitive_draws[i])))
+  test$p.value
+  precip_p_values[i] <- test$p.value
+}
+precip_p_values_all <- do.call(rbind, precip_p_values)
+mean(precip_p_values_all)
+
+
+
+
+# final plots -------------------------------------------------------------
+
+####### doing a seperate for loop to extract credible intervals for plotting
+
+## for precip
+precip_species_bcr_plotting_data <- vector('list')
+
+for(j in unique(precip_pops_trends_final$species)){
+  
+  species_dat <- precip_pops_trends_final %>% 
+    filter(species == j)
+  
+  for(k in unique(species_dat$bcr)){
+    
+    bcr_dat <- species_dat %>% 
+      filter(bcr == k)
+    
+    # getting credible interval for plotting purposes
+    
+    trend_basic_q <- quantile(bcr_dat$trend_basic, 
+                              probs=c(0.025, 0.975))
+    trend_slope_q <- quantile(bcr_dat$trend_slope, 
+                              probs=c(0.025, 0.975))
+    if(any(!is.na(bcr_dat$beta_posterior))){
+      beta_posterior_q <- quantile(bcr_dat$beta_posterior, 
+                                   probs=c(0.025, 0.975))
+    } else{
+      beta_posterior_q <- c(NA,NA)
+    }
+    
+    plotting_row <- data.frame(
+      species = j,
+      bcr = k,
+      trend_basic_median = median(bcr_dat$trend_basic),
+      trend_basic_lower = trend_basic_q[[1]],
+      trend_basic_upper = trend_basic_q[[2]],
+      trend_slope_median = median(bcr_dat$trend_slope),
+      trend_slope_lower = trend_slope_q[[1]],
+      trend_slope_upper = trend_slope_q[[2]],
+      beta_posterior_median = median(bcr_dat$beta_posterior),
+      beta_posterior_lower = beta_posterior_q[[1]],
+      beta_posterior_upper = beta_posterior_q[[2]]
+    )
+    
+    precip_species_bcr_plotting_data[[length(precip_species_bcr_plotting_data)+1]] <- plotting_row
+    
+  }
+  
+}
+
+precip_species_bcr_plotting_data_all <- do.call(rbind, precip_species_bcr_plotting_data)
+
+
+### making a plot
+head(precip_species_bcr_plotting_data_all)
+plot(trend_basic_median~beta_posterior_median, data = precip_species_bcr_plotting_data_all)
+
+# Create the plot
+ggplot((subset(precip_species_bcr_plotting_data_all, trend_slope_median <= 0 & beta_posterior_median >= 0)), 
+       aes(x = beta_posterior_median, y = trend_slope_median)) + #, color = species
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = trend_slope_lower, ymax = trend_slope_upper), width = 0) +  # Vertical error bars
+  geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  geom_smooth(method = "lm", se = FALSE, color = "red", fullrange = TRUE) +
+  theme_minimal() + 
+  labs(x = "Estimated sensitivity to monsoon precipitation volume", y = "Estimated population trend (2010-2022)")
+
+# Create the plot
+ggplot((subset(precip_species_bcr_plotting_data_all, trend_basic_median <= 0 & beta_posterior_median >= 0)), 
+       aes(x = beta_posterior_median, y = trend_basic_median, color = species)) +
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = trend_basic_lower, ymax = trend_basic_upper), width = 0) +  # Vertical error bars
+  geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  theme_minimal() + 
+  labs(x = "Estimated beta coefficient", y = "Estimated population trend (2010-2022)")
+
+
+
+######## for phenology
+phenology_species_bcr_plotting_data <- vector('list')
+
+for(j in unique(phenology_pops_trends_final$species)){
+  
+  species_dat <- phenology_pops_trends_final %>% 
+    filter(species == j)
+  
+  for(k in unique(species_dat$bcr)){
+    
+    bcr_dat <- species_dat %>% 
+      filter(bcr == k)
+    
+    # getting credible interval for plotting purposes
+    
+    trend_basic_q <- quantile(bcr_dat$trend_basic, 
+                              probs=c(0.025, 0.975))
+    trend_slope_q <- quantile(bcr_dat$trend_slope, 
+                              probs=c(0.025, 0.975))
+    if(any(!is.na(bcr_dat$beta_posterior))){
+      beta_posterior_q <- quantile(bcr_dat$beta_posterior, 
+                                   probs=c(0.025, 0.975))
+    } else{
+      beta_posterior_q <- c(NA,NA)
+    }
+    
+    plotting_row <- data.frame(
+      species = j,
+      bcr = k,
+      trend_basic_median = median(bcr_dat$trend_basic),
+      trend_basic_lower = trend_basic_q[[1]],
+      trend_basic_upper = trend_basic_q[[2]],
+      trend_slope_median = median(bcr_dat$trend_slope),
+      trend_slope_lower = trend_slope_q[[1]],
+      trend_slope_upper = trend_slope_q[[2]],
+      beta_posterior_median = median(bcr_dat$beta_posterior),
+      beta_posterior_lower = beta_posterior_q[[1]],
+      beta_posterior_upper = beta_posterior_q[[2]]
+    )
+    
+    phenology_species_bcr_plotting_data[[length(phenology_species_bcr_plotting_data)+1]] <- plotting_row
+    
+  }
+  
+}
+
+phenology_species_bcr_plotting_data_all <- do.call(rbind, phenology_species_bcr_plotting_data)
+
+
+### making a plot
+head(phenology_species_bcr_plotting_data_all)
+plot(trend_slope_median~beta_posterior_median, data = phenology_species_bcr_plotting_data_all)
+
+# Create the plot
+declining_positive <- ggplot((subset(phenology_species_bcr_plotting_data_all, trend_slope_median <= 0 & beta_posterior_median >= 0)), 
+       aes(x = beta_posterior_median, y = trend_slope_median)) + #, color = species
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = trend_slope_lower, ymax = trend_slope_upper), width = 0) +  # Vertical error bars
+  geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  geom_smooth(method = "lm", se = FALSE, color = "red", fullrange = TRUE) +
+  theme_minimal() + 
+  labs(x = "Estimated sensitivity to monsoon phenology", y = "Estimated population trend (2010-2022)")
+
+declining_negative <- ggplot((subset(phenology_species_bcr_plotting_data_all, trend_slope_median <= 0 & beta_posterior_median <= 0)), 
+       aes(x = beta_posterior_median, y = trend_slope_median)) + #, color = species
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = trend_slope_lower, ymax = trend_slope_upper), width = 0) +  # Vertical error bars
+  geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  geom_smooth(method = "lm", se = FALSE, color = "red", fullrange = TRUE) +
+  theme_minimal() + 
+  labs(x = "Estimated sensitivity to monsoon phenology", y = "Estimated population trend (2010-2022)")
+
+ggplot((subset(phenology_species_bcr_plotting_data_all, trend_slope_median <= 0 & !is.na(beta_posterior_median) )), 
+       aes(x = beta_posterior_median, y = trend_slope_median)) + #, color = species
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = trend_slope_lower, ymax = trend_slope_upper), width = 0) +  # Vertical error bars
+  geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  #geom_smooth(method = "lm", se = FALSE, color = "red", fullrange = TRUE) +
+  # Regression line for points where x < 0 (left of y-axis)
+  geom_smooth(method = "gam", se = FALSE, 
+              color = "red", fullrange = TRUE) + 
+  theme_minimal() + 
+  labs(x = "Estimated sensitivity to monsoon precipitation phenology", y = "Estimated population trend (2010-2022)")
+
+
+
+library(gridExtra)
+
+vertical_line <- ggplot() +
+  geom_vline(xintercept = 1, size = 0.5, color = "black") +  # Black solid line
+  theme_void()
+
+grid.arrange(declining_negative, vertical_line, declining_positive, ncol = 3, widths = c(5, 0.2, 5))
+grid.arrange(declining_negative, declining_positive, ncol = 2)

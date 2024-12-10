@@ -1,0 +1,118 @@
+####### In this script, I use the daymetr package (https://cran.r-project.org/web/packages/daymetr/vignettes/daymetr-vignette.html) 
+####### to download daily precipitation data in daymet tiles that cover 
+####### the approximate area of the North American monsoon. I then calculate 
+####### mean daily precipitation in each tile for each day from 1980-2019.
+#=============================================================================
+
+#setwd("~/Documents/Dissertation Research/Molt Migrant Conservation")
+setwd("/Volumes/commons/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon.prcp/")
+
+#loading the required packages
+library(daymetr) # for downloading Daymet data
+library(ncdf4) # package for netcdf manipulation
+library(raster) # package for raster manipulation
+library(rgdal) # package for geospatial analysis
+library(ggplot2) # package for plotting
+library(tidyverse)
+library(sf)
+
+# Preparing Daymet Data ---------------------------------------------------
+
+#years to download Daymet data for
+years <- c(1980:2019) #Daymet data goes back to 1980
+
+# In the current version of this script, I select tiles that constitute my 
+# region of interest from this map: https://daymet.ornl.gov/static/graphics/Tiles_DaymetV3.png,
+# and then download data for those tiles. I think it would be better to download data for tiles 
+# that overlap with a given shapefile, but I haven't found one of those 
+# for the North American monsoon yet / haven't figured out how to do that
+
+# defining tiles for molting grounds and breeding grounds
+monsoon.tiles <- c((11012:11017), (10832:10837), (10653:10658), (10473:10478), (10294:10299), 
+                   (10115:10120), (9937:9940), (9758:9761), (9580:9582))
+# breeding.tiles <- c((12447:12458), (12268:12278), (12088:12098), (11908:11918), (11728:11738),
+#                     (11549:11558), (11369:11378), (11190:11198), (11011:11018))
+
+## Downloading the prcp data for each tile and saving to working directory. 
+## This can take a long time if you're downloading data for many tiles and/or 
+## many years. I did this in Teton to save time.
+for(tile in monsoon.tiles){
+  for(year in years){
+    download_daymet_tiles(tiles = tile,
+                          start = year,
+                          end = year,
+                          param = "prcp", #specify which variable(s) you want data for
+                          path = "/pfs/tsfs1/gscratch/pdoughe1/monsoon.prcp") #if doing in Teton
+  }
+}
+
+
+
+# extracting mean precipitation values for each tile ----------------------
+
+# The above code downloads data for 1 x 1 km pixels in each tile. The following 
+# code transforms the .nc files into a dataframe and averages daily precipitation 
+# across all pixels in a tile.
+
+# making a vector of the names of all tiles for which you downloaded prcp. data
+nc_names <- list.files(pattern = ".nc")
+nc_names <- list.files(pattern = "prcp_1980")
+#test_names <- c("prcp_2000_11015.nc", "prcp_2001_11015.nc")
+
+monsoon_tiles <- c((11014:11015), (10834:10836), (10655:10656), 10294, 10295, 10115, 10116,
+  10476, 10477, 10296, 10297, 10298, (10118:10119), (9938:9939), (9758:9760))
+
+## filter down list of file names to only ones for monsoon tiles
+monsoon_tiles <- paste("prcp_1980_",monsoon_tiles,".nc", sep = "")
+
+nc_names %in% monsoon_tiles
+
+## save dataset of longitude and latitude for all grids in each tile
+grid.coords = vector('list', length(monsoon_tiles))
+
+for (file in monsoon_tiles){
+  ##most of this code comes from https://rpubs.com/boyerag/297592
+  #reading in the netCDF file contents
+  nc_data <- nc_open(file)
+
+  #reading in lat, long, and time attributes
+  lon <- ncvar_get(nc_data, "lon")
+  lat <- ncvar_get(nc_data, "lat", verbose = F)
+  t <- ncvar_get(nc_data, "time")
+  
+  #reading in data for prcp variable and verifying dimensions
+  prcp.array <- ncvar_get(nc_data, "prcp") # store the data in a 3-dimensional array
+  
+  #seeing what fill value was for missing data
+  fillvalue <- ncatt_get(nc_data, "prcp", "_FillValue")
+  
+  #closing the netCDF file because we're all done reading in the data
+  nc_close(nc_data)
+  
+  ##working with the data
+  #replacing fill values with NA's
+  prcp.array[prcp.array == fillvalue$value] <- NA
+  
+  ##extracting data (finding the average precipitation values across all squares in the entire tile for each day)
+  #converting the 3D array of data into a raster brick
+  r_brick <- brick(prcp.array, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat),
+                   crs=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+  
+  #r_brick <- flip(t(r_brick), direction='y')
+  prcp.df <- rasterToPoints(r_brick)
+  prcp.df <- as.data.frame(prcp.df)
+
+  tile <- (sub("prcp_...._", "", file))
+  tile <- (sub(".nc", "", tile))
+  
+  ## converting lat and long into shapefile
+  tile.sf <- data.frame(tile,prcp.df$x,prcp.df$y)
+  
+  grid.coords[[file]] <- tile.sf
+}
+
+#binding list into their respective dataframes
+coords.df <- do.call(rbind, grid.coords)
+
+#saving these dataframes as csvs
+write.csv(coords.df,"all_monsoon_coords.csv")

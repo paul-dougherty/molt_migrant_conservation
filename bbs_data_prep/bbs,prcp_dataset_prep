@@ -2,7 +2,7 @@
 ####### annual abundance estimates for modeling
 
 #setwd("~/Documents/Dissertation Research/Molt Migrant Conservation/")
-setwd("/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/")
+setwd("/Volumes/project/...Lab/.../Molt_migrant_conservation/")
 
 library(tidyverse)
 library(MuMIn)
@@ -268,7 +268,7 @@ regional.prcp.dat <- do.call(cbind, area.monsoon.dat)
 regional.prcp.dat <-regional.prcp.dat[!duplicated(as.list(regional.prcp.dat))]
 
 write_csv(regional.prcp.dat,"~/Documents/Dissertation Research/Molt Migrant Conservation/regional.prcp.dat.2023.csv")
-write_csv(regional.prcp.dat,"/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/regional.prcp.dat.2023.csv")
+write_csv(regional.prcp.dat,"/Volumes/project/...Lab/.../Molt_migrant_conservation/regional.prcp.dat.2023.csv")
 regional.prcp.dat <- read_csv("regional.prcp.dat.2023.csv")
 
 

@@ -9,10 +9,10 @@ setwd("/Volumes/commons/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon.pr
 
 #loading the required packages
 library(daymetr) # for downloading Daymet data
-library(ncdf4) # package for netcdf manipulation
-library(raster) # package for raster manipulation
-library(rgdal) # package for geospatial analysis
-library(ggplot2) # package for plotting
+library(ncdf4) # for netcdf manipulation
+library(raster) # for raster manipulation
+library(rgdal) # for geospatial analysis
+library(ggplot2)
 library(tidyverse)
 library(sf)
 
@@ -56,63 +56,83 @@ for(tile in monsoon.tiles){
 
 # making a vector of the names of all tiles for which you downloaded prcp. data
 nc_names <- list.files(pattern = ".nc")
-nc_names <- list.files(pattern = "prcp_1980")
 #test_names <- c("prcp_2000_11015.nc", "prcp_2001_11015.nc")
 
-monsoon_tiles <- c((11014:11015), (10834:10836), (10655:10656), 10294, 10295, 10115, 10116,
-  10476, 10477, 10296, 10297, 10298, (10118:10119), (9938:9939), (9758:9760))
+## extracting mean prcp. values for each tile on each day, and saving as a .csv file in the working directory
+## also extracting coordinates for each Daymet square
 
-## filter down list of file names to only ones for monsoon tiles
-monsoon_tiles <- paste("prcp_1980_",monsoon_tiles,".nc", sep = "")
+# creating empty lists to hold the data
+tile.prcp = vector('list', length(nc_names))
+tile.coords = vector('list', length(nc_names)) # also recording coordinates for each tile
 
-nc_names %in% monsoon_tiles
-
-## save dataset of longitude and latitude for all grids in each tile
-grid.coords = vector('list', length(monsoon_tiles))
-
-for (file in monsoon_tiles){
+for (file in nc_names){
   ##most of this code comes from https://rpubs.com/boyerag/297592
   #reading in the netCDF file contents
   nc_data <- nc_open(file)
-
+  
   #reading in lat, long, and time attributes
   lon <- ncvar_get(nc_data, "lon")
   lat <- ncvar_get(nc_data, "lat", verbose = F)
   t <- ncvar_get(nc_data, "time")
-  
+
   #reading in data for prcp variable and verifying dimensions
   prcp.array <- ncvar_get(nc_data, "prcp") # store the data in a 3-dimensional array
-  
+
   #seeing what fill value was for missing data
   fillvalue <- ncatt_get(nc_data, "prcp", "_FillValue")
-  
+
   #closing the netCDF file because we're all done reading in the data
   nc_close(nc_data)
-  
+
   ##working with the data
   #replacing fill values with NA's
   prcp.array[prcp.array == fillvalue$value] <- NA
-  
+
   ##extracting data (finding the average precipitation values across all squares in the entire tile for each day)
   #converting the 3D array of data into a raster brick
-  r_brick <- brick(prcp.array, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat),
+  r_brick <- brick(prcp.array, xmn=min(lat), xmx=max(lat), ymn=min(lon), ymx=max(lon),
                    crs=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
-  
+
   #r_brick <- flip(t(r_brick), direction='y')
   prcp.df <- rasterToPoints(r_brick)
   prcp.df <- as.data.frame(prcp.df)
 
+  #removing the latitude and longitude columns of this dataframe, calculating the mean across the entire square for each day
+  mean.prcp <- apply(prcp.df[,3:367], 2, mean)
+  mean.prcp <- as.data.frame(mean.prcp)
+  mean.prcp <- mean.prcp[,1]
+  yday <- (1:365)
+  year <- regmatches(file, regexpr("19..|20..", file))
   tile <- (sub("prcp_...._", "", file))
   tile <- (sub(".nc", "", tile))
+
+  # binding all together in a dataframe
+  tile.prcp[[file]] <- data.frame(tile, year, yday, mean.prcp)
+
+  #adding a month column to this dataframe
+  #creating date column
+  tile.prcp[[file]]$date <- as.Date(paste(tile.prcp[[file]]$year, tile.prcp[[file]]$yday, sep = "-"), "%Y-%j")
+
+  #extracting month data for each date
+  tile.prcp[[file]]$month <- as.numeric(format(tile.prcp[[file]]$date, "%m"))
+
   
-  ## converting lat and long into shapefile
-  tile.sf <- data.frame(tile,prcp.df$x,prcp.df$y)
+  ## creating a separate dataframe with coordinates for every tile
+  min.lat <- min(lat)
+  max.lat <- max(lat)
+  min.lon <- min(lon)
+  max.lon <- max(lon)
   
-  grid.coords[[file]] <- tile.sf
+  tile.coords[[file]] <- data.frame(tile, min.lat, max.lat, min.lon, max.lon, year)
 }
 
-#binding list into their respective dataframes
-coords.df <- do.call(rbind, grid.coords)
+#binding both lists into their respective dataframes
+prcp.dat <- do.call(rbind, tile.prcp)
+coords.df <- do.call(rbind, tile.coords)
+# for the coordinates dataframe, getting rid of redundant rows (you need only data for each year)
+coords.unique <- distinct(coords.df, tile, min.lat, max.lat, min.lon, max.lon)
+
 
 #saving these dataframes as csvs
-write.csv(coords.df,"all_monsoon_coords.csv")
+write.csv(prcp.df,"/Volumes/commons/CarlingLab/pdoughe1/Molt_migrant_conservation/prcp.df.csv")
+write.csv(coords.unique,"/Volumes/commons/CarlingLab/pdoughe1/Molt_migrant_conservation/coords.df.csv")

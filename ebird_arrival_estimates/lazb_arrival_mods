@@ -1,0 +1,288 @@
+######## in this script, we explore interannual variation in estimates for molt stopover behavior
+######## for Lazuli Bunting, model the relationship between these estimates and monsoon variables,
+######## and plot these relationships
+
+## adding precipitation data
+
+library(tidyverse)
+
+regional.prcp.dat <- read_csv("regional.prcp.dat.2023.csv")
+
+ebird.prcp.dat <- regional.prcp.dat %>% 
+  filter(year...1 >= 2007 & year...1 <= 2022)
+
+
+setwd("/Volumes/arcconly$/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon_arrival_estimates/ebird_arrival_model_outputs")
+
+# Lazuli Bunting ----------------------------------------------------------
+lazb_iteration_estimates <- readRDS("lazb_iterations.RData")
+lazb_year <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_year[[i]] <- lazb_iteration_estimates[[i]]$year
+}
+lazb_species <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_species[[i]] <- lazb_iteration_estimates[[i]]$species
+}
+lazb_halfmax_iterations <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_halfmax_iterations[[i]] <- lazb_iteration_estimates[[i]]$halfmax_fit
+}
+lazb_max_iterations <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_max_iterations[[i]] <- lazb_iteration_estimates[[i]]$max_fit
+}
+lazb_max_val_iterations <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_max_val_iterations[[i]] <- lazb_iteration_estimates[[i]]$max_val
+}
+lazb_peak_iterations <- vector('list', length(lazb_iteration_estimates))
+for(i in 1:length(lazb_iteration_estimates)){
+  lazb_peak_iterations[[i]] <- lazb_iteration_estimates[[i]]$peak_length
+}
+
+
+lazb_data <- data.frame(
+  species = unlist(rep(lazb_species, each = 3000)),
+  year = unlist(rep(lazb_year, each = 3000)),
+  half_max_date = unlist(lazb_halfmax_iterations),
+  max_date = unlist(lazb_max_iterations),
+  max_val = unlist(lazb_max_val_iterations),
+  peak_length = unlist(lazb_peak_iterations),
+  total_precipitation = rep(scale(ebird.prcp.dat$sonora.prcp.wide.mean), each = 3000),
+  precipitation_halfway = rep(scale(ebird.prcp.dat$sonora.monsoon.halfway.mean), each = 3000),
+  precipitation_start_date = rep(scale(ebird.prcp.dat$sonora.monsoon.start.mean), each = 3000),
+  precipitation_end = rep(scale(ebird.prcp.dat$sonora.monsoon.end.mean), each = 3000)
+)
+
+plot(half_max_date~year,data=lazb_data)
+plot(max_date~year,data=lazb_data)
+plot(max_val~year,data=lazb_data)
+plot(peak_length~year,data=lazb_data)
+
+
+#### explorong correlations between different stopober metrics
+lazb_arrival_medians <- aggregate(half_max_date ~ year, data = lazb_data, FUN = median)
+min(lazb_arrival_medians$half_max_date)
+max(lazb_arrival_medians$half_max_date)
+
+lazb_max_medians <- aggregate(max_val ~ year, data = lazb_data, FUN = median)
+min(lazb_max_medians$max_val)
+max(lazb_max_medians$max_val)
+
+lazb_duration_medians <- aggregate(peak_length ~ year, data = lazb_data, FUN = median)
+min(lazb_duration_medians$peak_length)
+max(lazb_duration_medians$peak_length)
+
+# exploring correlations
+cor(lazb_duration_medians$peak_length, lazb_max_medians$max_val) # a negative correlation
+cor(lazb_duration_medians$peak_length, lazb_arrival_medians$half_max_date)
+cor(lazb_arrival_medians$half_max_date, lazb_max_medians$max_val)
+ 
+cor(lazb_data$peak_length, lazb_data$max_val)
+
+
+
+### need to combine ebird records with precip data
+names(lazb_data)
+lazb_data$max_val_medians <- (rep(lazb_max_medians$max_val, each = 3000))
+lazb_data$peak_length_medians <- (rep(lazb_duration_medians$peak_length, each = 3000))
+
+
+lazb_max_mins <- aggregate(max_val ~ year, data = lazb_data, FUN = quantile(probs=c(0.025, 0.975)))
+
+print(quantile(precip_model_outputs_all[,i], 
+               probs=c(0.025, 0.975)))
+
+# getting cred intervals for each year estimate
+cred_ints <- list()
+for(i in unique(lazb_data$year)){
+  year_data <- lazb_data %>% 
+    filter(year == i)
+  
+  max_val <- quantile(year_data$max_val,probs=c(0.025, 0.975))
+  duration <- quantile(year_data$peak_length,probs=c(0.025, 0.975))
+  
+  cred_ints[[i]] <- data.frame(max_val_lower = max_val[[1]],
+                               max_val_upper = max_val[[2]],
+                               duration_lower = duration[[1]],
+                               duration_upper = duration[[2]])
+}
+cred_ints <- do.call(rbind, cred_ints)
+
+lazb_data$max_val_lower <- (rep(cred_ints$max_val_lower, each = 3000))
+lazb_data$max_val_upper <- (rep(cred_ints$max_val_upper, each = 3000))
+lazb_data$duration_lower <- (rep(cred_ints$duration_lower, each = 3000))
+lazb_data$duration_upper <- (rep(cred_ints$duration_upper, each = 3000))
+
+
+## adding bayesian credible intervals
+
+library(brms)
+func.2 <- bf(max_val ~ total_precipitation)
+func.5 <- bf(peak_length ~ precipitation_end)
+
+
+# need median values for max val and duration
+
+max_val <- aggregate(max_val ~ year, median, data = lazb_data)
+peak_length <- aggregate(peak_length ~ year, median, data = lazb_data)
+
+data <- data.frame(
+  #species = species[[1]],
+  #year = half_max_date$year,
+  #half_max_date = half_max_date$half_max_date,
+  #max_date = max_date$max_date,
+  max_val = max_val$max_val,
+  peak_length = peak_length$peak_length,
+  total_precipitation = scale(ebird.prcp.dat$sonora.prcp.wide.mean),
+  precipitation_halfway = scale(ebird.prcp.dat$sonora.monsoon.halfway.mean),
+  precipitation_start_date = scale(ebird.prcp.dat$sonora.monsoon.start.mean),
+  precipitation_end = scale(ebird.prcp.dat$sonora.monsoon.end.mean) #,
+  #early_precip = rep(scale(ebird.prcp.dat$sonora.prcp.early.mean), each = 3000),
+  #late_precip = rep(scale(ebird.prcp.dat$sonora.prcp.late.mean), each = 3000),
+  #monsoon_intensity = rep(scale(ebird.prcp.dat$sonora.monsoon.intensity.mean), each = 3000)
+)
+names(lazb_data)
+lazb_data$max_val_medians <- (rep(lazb_max_medians$max_val, each = 3000))
+lazb_data$peak_length_medians <- (rep(lazb_duration_medians$peak_length, each = 3000))
+
+
+lazb_max_mins <- aggregate(max_val ~ year, data = lazb_data, FUN = quantile(probs=c(0.025, 0.975)))
+
+print(quantile(precip_model_outputs_all[,i], 
+               probs=c(0.025, 0.975)))
+
+# getting cred intervals for each year estimate
+cred_ints <- list()
+for(i in unique(lazb_data$year)){
+  year_data <- lazb_data %>% 
+    filter(year == i)
+  
+  max_val <- quantile(year_data$max_val,probs=c(0.025, 0.975))
+  duration <- quantile(year_data$peak_length,probs=c(0.025, 0.975))
+  
+  cred_ints[[i]] <- data.frame(max_val_lower = max_val[[1]],
+                               max_val_upper = max_val[[2]],
+                               duration_lower = duration[[1]],
+                               duration_upper = duration[[2]])
+}
+cred_ints <- do.call(rbind, cred_ints)
+
+lazb_data$max_val_lower <- (rep(cred_ints$max_val_lower, each = 3000))
+lazb_data$max_val_upper <- (rep(cred_ints$max_val_upper, each = 3000))
+lazb_data$duration_lower <- (rep(cred_ints$duration_lower, each = 3000))
+lazb_data$duration_upper <- (rep(cred_ints$duration_upper, each = 3000))
+
+
+## adding bayesian credible intervals
+
+library(brms)
+func.2 <- bf(max_val ~ total_precipitation)
+func.5 <- bf(peak_length ~ precipitation_end)
+
+
+# need median values for max val and duration
+
+max_val <- aggregate(max_val ~ year, median, data = lazb_data)
+peak_length <- aggregate(peak_length ~ year, median, data = lazb_data)
+
+data <- data.frame(
+  #species = species[[1]],
+  #year = half_max_date$year,
+  #half_max_date = half_max_date$half_max_date,
+  #max_date = max_date$max_date,
+  max_val = max_val$max_val,
+  peak_length = peak_length$peak_length,
+  total_precipitation = scale(ebird.prcp.dat$sonora.prcp.wide.mean),
+  precipitation_halfway = scale(ebird.prcp.dat$sonora.monsoon.halfway.mean),
+  precipitation_start_date = scale(ebird.prcp.dat$sonora.monsoon.start.mean),
+  precipitation_end = scale(ebird.prcp.dat$sonora.monsoon.end.mean) #,
+  #early_precip = rep(scale(ebird.prcp.dat$sonora.prcp.early.mean), each = 3000),
+  #late_precip = rep(scale(ebird.prcp.dat$sonora.prcp.late.mean), each = 3000),
+  #monsoon_intensity = rep(scale(ebird.prcp.dat$sonora.monsoon.intensity.mean), each = 3000)
+)
+
+
+library(betareg)
+m.2 <- betareg(func.2, data = data, link = "logit")
+
+m.2$coefficients$mean
+int <- m.2$coefficients$mean[["(Intercept)"]]
+tot_precip <- m.2$coefficients$mean[["total_precipitation"]]
+
+priors <- c(set_prior(paste("normal(", int, ",10)", sep = ""), class = "Intercept"),
+            set_prior(paste("normal(", tot_precip, ",10)", sep = ""),class="b",coef="total_precipitation"))
+
+max_mod.2 <-brm(formula=func.2, data=data, family=Beta(link = "logit"), 
+                prior = priors,      
+                #control=list(adapt_delta = 0.8, max_treedepth=10), 
+                warmup=1000, iter=3000, thin=1, chains=3, cores=3)  
+print("max_mod.2")
+summary(max_mod.2)
+posterior_summary(max_mod.2)
+
+
+### for func.5 model
+m.5 <- glm(func.5, 
+           data = data, family = poisson(link = "log"))
+m.5$coefficients
+int <- m.5$coefficients[["(Intercept)"]]
+end <- m.5$coefficients[["precipitation_end"]]
+
+priors <- c(set_prior(paste("normal(", int, ",10)", sep = ""), class = "Intercept"),
+            set_prior(paste("normal(", end, ",10)", sep = ""),class="b",coef="precipitation_end"))
+
+duration_mod.5 <-brm(formula=func.5, data=data, family=poisson(link = "log"), 
+                     prior = priors,      
+                     #control=list(adapt_delta = 0.8, max_treedepth=10), 
+                     warmup=1000, iter=3000, thin=1, chains=3, cores=3)  
+print("duration_mod.5")
+summary(duration_mod.5)
+posterior_summary(duration_mod.5)
+
+
+#data$fitted <- fitted(max_mod.2)[, "Estimate"]
+lazb_data$max_fitted <- rep(fitted(max_mod.2)[, "Estimate"], each = 3000)
+# Get confidence intervals (or credible intervals from the posterior)
+lazb_data$max_lower <- rep(fitted(max_mod.2)[, "Q2.5"], each = 3000)
+lazb_data$max_upper <- rep(fitted(max_mod.2)[, "Q97.5"], each = 3000)
+
+#data$fitted <- fitted(max_mod.2)[, "Estimate"]
+lazb_data$peak_fitted <- rep(fitted(duration_mod.5)[, "Estimate"], each = 3000)
+# Get confidence intervals (or credible intervals from the posterior)
+lazb_data$peak_lower <- rep(fitted(duration_mod.5)[, "Q2.5"], each = 3000)
+lazb_data$peak_upper <- rep(fitted(duration_mod.5)[, "Q97.5"], each = 3000)
+
+
+# plotting relationship between monsoon precip volume and max occurrence
+max_precip <- ggplot(lazb_data, 
+                     aes(x = total_precipitation, y = max_val_medians)) + #, color = species
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = max_val_lower, ymax = max_val_upper), width = 0) +  # Vertical error bars
+  #geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  #geom_smooth(method = "lm", se = FALSE, color = "dodgerblue", fullrange = TRUE) +
+  theme_minimal() + 
+  labs(x = "Total monsoon precipitation anomaly", y = "Maximum occurrence probability") +
+  geom_line(aes(y = max_fitted), color = "dodgerblue") +   # Fitted line
+  geom_ribbon(aes(ymin = max_lower, ymax = max_upper), 
+              alpha = 0.2, fill = "dodgerblue")
+
+# now plotting relationship between monsoon precip end date and stopover duration
+peak_length_end <- ggplot(lazb_data, 
+                          aes(x = precipitation_end, y = peak_length_medians)) + #, color = species
+  geom_point() +  # Plot the points
+  geom_errorbar(aes(ymin = duration_lower, ymax = duration_upper), width = 0) +  # Vertical error bars
+  #geom_errorbarh(aes(xmin = beta_posterior_lower, xmax = beta_posterior_upper), height = 0) +  # Horizontal error bars
+  #geom_smooth(method = "lm", se = FALSE, color = "dodgerblue", fullrange = TRUE) +
+  theme_minimal() + 
+  labs(x = "Monsoon precipitation end date anomaly", y = "Stopover duration")+
+  geom_line(aes(y = peak_fitted), color = "dodgerblue") +   # Fitted line
+  geom_ribbon(aes(ymin = peak_lower, ymax = peak_upper), 
+              alpha = 0.2, fill = "dodgerblue")
+
+
+## plotting these together
+library(gridExtra)
+grid.arrange(max_precip, peak_length_end)
+#saving combined plot, dimensions for pdf are portrait 8x6

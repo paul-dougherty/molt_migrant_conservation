@@ -1,7 +1,7 @@
 library(bbsBayes)
 library(tidyverse)
 
-setwd("/Users/pauldougherty/Documents/Dissertation Research/Molt Migrant Conservation")
+setwd("/Users/.../Documents/Dissertation Research/Molt Migrant Conservation")
 
 
 bird.meta <- read.csv("molt_migrant_metadata.csv", header = TRUE)

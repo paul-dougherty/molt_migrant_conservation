@@ -19,12 +19,12 @@ library(tidyverse)
 library(auk)
 library(lubridate)
 
-setwd("/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon_arrival_estimates") # accessing eBird data in Alcova
+setwd("/Volumes/project/...Lab/.../Molt_migrant_conservation/monsoon_arrival_estimates") # accessing eBird data in Alcova
 
 # defining the directory for the eBird data
-ebd_dir <-"/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon_arrival_estimates"
-#ebd_dir <- "/pfs/tsfs1/gscratch/pdoughe1" # if doing on Teton
-#ebd_dir <- "/pfs/tc1/gscratch/pdoughe1"  # if doing on Beartooth
+ebd_dir <-"/Volumes/project/...Lab/.../Molt_migrant_conservation/monsoon_arrival_estimates"
+#ebd_dir <- "/pfs/tsfs1/gscratch/..." # if doing on Teton
+#ebd_dir <- "/pfs/tc1/gscratch/..."  # if doing on Beartooth
 
 #=============================================================================================
 #     preparing eBird data

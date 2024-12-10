@@ -5,7 +5,7 @@
 #=============================================================================
 
 #setwd("~/Documents/Dissertation Research/Molt Migrant Conservation")
-setwd("/Volumes/commons/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon.prcp/")
+setwd("/Volumes/commons/...Lab/.../Molt_migrant_conservation/monsoon.prcp/")
 
 #loading the required packages
 library(daymetr) # for downloading Daymet data
@@ -42,7 +42,7 @@ for(tile in monsoon.tiles){
                           start = year,
                           end = year,
                           param = "prcp", #specify which variable(s) you want data for
-                          path = "/pfs/tsfs1/gscratch/pdoughe1/monsoon.prcp") #if doing in Teton
+                          path = "/pfs/tsfs1/gscratch/.../monsoon.prcp") #if doing in Teton
   }
 }
 

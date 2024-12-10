@@ -1,7 +1,7 @@
 #####* In this long script, we first estimate trends for each molt-migrant taxon between 2010-2023 using the trend 
 #####* estimation functions in the "trend_estimating_functions" script, and then model the relationships between
 #####* these trends and the taxon's estimated sensitivity to variaiton in monsoon precipitation volume and phenology
-#####* prevesiously estimated in the "monsoon_bbs_modeling" script, and then plot the results.
+#####* prevesiously estimated in the "bbs_monsoon_models" script, and then plot the results.
 
 
 library(tidyverse)

@@ -1,0 +1,1679 @@
+####### In this script, we prepare Daymet precipiation and Breeding Bird Survey 
+####### annual abundance estimates for modeling
+
+#setwd("~/Documents/Dissertation Research/Molt Migrant Conservation/")
+setwd("/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/")
+
+library(tidyverse)
+library(MuMIn)
+library(ggplot2)
+library(ggpmisc)
+library(dotwhisker)
+library(data.table) # for the shift function
+select <- dplyr::select
+
+# reading in the datasets
+bbs.dat <- read_csv("bbs.dat.bcr.csv")
+regional.prcp.dat <- read_csv("regional.prcp.dat.csv")
+#anthro.prop <- read_csv("pland.anthro.csv")
+ndvi.dat <- read_csv("regional.ndvi.dat.csv")
+
+
+# precipitation prep ------------------------------------------------------
+
+prcp.dat.test <- read.csv("prcp.df_final.csv")
+prcp.dat <- read.csv("prcp.df.2023.csv")
+
+# defining tiles that overlap with areas of interest
+sonora_tiles <- c((11014:11015), (10834:10836), (10655:10656))
+baja_tiles <- c(10294, 10295, 10115, 10116)
+central_mex_tiles <- c(10476, 10477, 10296, 10297, 10298)
+south_mex_tiles <- c((10118:10119), (9938:9939), (9758:9760))
+
+# grouping these four vectors as a list (area.tiles)
+area_tiles <- list(sonora_tiles, baja_tiles, central_mex_tiles, south_mex_tiles)
+area_names <- list("sonora_tiles", "baja_tiles", "central_mex_tiles", "south_mex_tiles")
+
+# calculating precipitation metrics in each areas
+area.monsoon.dat = vector('list', length(area_tiles))
+
+for(j in 1:length(area_tiles)){
+  # in the for loop, the first thing we need to do is filter the complete precipitation dataset 
+  # down to the relevant tiles
+  
+  prcp.area <- prcp.dat %>%
+    filter(tile %in% area_tiles[[j]])
+  
+  ### First, we'll determine the total monsoon precipitation for each year by summing the total precipitation 
+  ### from June through October (a very conservative window that encompasses the entirety of monsoon season). 
+  
+  # subsetting the dataset to include only data from June through October
+  monsoon.wide <- subset(prcp.area, month >= 6 & month <= 10)
+  
+  # now finding the sum of all precipitation within this five month window for each year using the 
+  # "aggregate" function
+  monsoon.wide.prcp_mean <- aggregate(mean.prcp ~ year, data=monsoon.wide, sum, na.rm=T) # should this be mean instead of sum?
+  monsoon.wide.prcp_sum <- aggregate(sum.prcp ~ year, data=monsoon.wide, sum, na.rm=T)
+  
+  monsoon.wide.prcp <- merge(monsoon.wide.prcp_mean, monsoon.wide.prcp_sum)
+  
+  # renaming the column with total monsoon precip. for each year
+  new.name.mean <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.wide.mean"))
+  new.name.sum <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.wide.sum"))
+  
+  monsoon.wide.prcp <- monsoon.wide.prcp %>% 
+    rename(!!new.name.mean := mean.prcp,
+           !!new.name.sum := sum.prcp)
+  
+  # Now, we've calculated the total amount of June-October precipition across all of our tiles in each year.
+  # This is a great start, but we may want to partitiion this monsoon data in different ways to see how 
+  # different qualities of the monsoon (e.g., location, timing) influence the breeding abundance of western 
+  # molt migrants. Below are a few examples of things you can do this. Feel free to explore other ways to 
+  # partition/summarize the monsoon data.
+  
+  # The North American monsoon is projected to come later each year due to climate change. We may want to 
+  # investigate how early season (June-July) monsoon precipitation and late season (September-October) 
+  # monsoon precipitation affect western molt-migrants differently. We can calculate total June-July 
+  # precipitation and total September-October precipitation the same way we calculated total monsoon 
+  # season precipitation, only this time we'll impose a narrower time filter.
+  
+  # for June-July
+  monsoon.early <- subset(prcp.area, month >= 6 & month <= 7)
+  monsoon.early.prcp_mean <- aggregate(mean.prcp ~ year, data=monsoon.early, sum, na.rm=T)
+  monsoon.early.prcp_sum <- aggregate(sum.prcp ~ year, data=monsoon.early, sum, na.rm=T)
+  monsoon.early.prcp <- merge(monsoon.early.prcp_mean, monsoon.early.prcp_sum)
+  
+  # renaming the column with total monsoon precip. for each year
+  new.name.mean <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.early.mean"))
+  new.name.sum <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.early.sum"))
+  
+  monsoon.early.prcp <- monsoon.early.prcp %>% 
+    rename(!!new.name.mean := mean.prcp,
+           !!new.name.sum := sum.prcp)
+  
+  # for September-October
+  monsoon.late <- subset(prcp.area, month >= 9 & month <= 10)
+  monsoon.late.prcp_mean <- aggregate(mean.prcp ~ year, data=monsoon.late, sum, na.rm=T)
+  monsoon.late.prcp_sum <- aggregate(sum.prcp ~ year, data=monsoon.late, sum, na.rm=T)
+  monsoon.late.prcp <- merge(monsoon.late.prcp_mean, monsoon.late.prcp_sum)
+  
+  # renaming the column with total monsoon precip. for each year
+  new.name.mean <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.late.mean"))
+  new.name.sum <- (paste0((sub("_tiles", ".", area_names[[j]])),"prcp.late.sum"))
+  
+  monsoon.late.prcp <- monsoon.late.prcp %>% 
+    rename(!!new.name.mean := mean.prcp,
+           !!new.name.sum := sum.prcp)
+  
+  # Finally, we can try one more metric of monsoon timing. This time, we'll calculate the number of 
+  # days that it takes from June 1st for the cumulative precipitation to exceed half of the total 
+  # precipitation that falls from June to October of a given year. This calculation is a little more 
+  # tricky than what we do above. One approach is to use a for loop that calculates the number of 
+  # days beginning on June 1st during which the cumulative precipitation has not yet exceeded half the 
+  # total precipitation for the entire monsoon season, and iterates this steps over each year.
+  
+  
+  monsoon.halfway.data = vector('list', length(unique(monsoon.wide$year)))
+  monsoon.additional.data = vector('list', length(unique(monsoon.wide$year)))
+  # And then run our for loop:
+  for(i in unique(monsoon.wide$year)){ #recall that "monsoon.wide" is the original dataset filtered down 
+    # to include data for only June-October
+    
+    #first splitting the dataset into a seperate datset for each year
+    year.data <- monsoon.wide %>%
+      filter(year == i) # The "filter" function from the dplyr package allows us to filter the dataframe 
+    #down to only rows that we're interested in, in this case only rows from a certain year. It basically 
+    #does the same thing as base R's "subset" function.
+    
+    # Remember we have to account for the fact that the precipitation data are grouped into 
+    # different tiles. To do this, we add the precipitation on each day over all the tiles using 
+    # the "aggregate" function, so we're left with only the total precipitation on each day 
+    # in each year.
+    sum.tiles.mean <- aggregate(mean.prcp ~ yday, data=year.data, sum)
+    sum.tiles.sum <- aggregate(sum.prcp ~ yday, data=year.data, sum)
+    
+    
+    # Now creating a vector of TRUE and FALSE values that represent whether or not the cumulative 
+    # precipitation is greater than half of the total precipitation that falls during the monsoon window 
+    # of that year. The "order" funciton ensures that the julian days for the dates are presented in 
+    # ascending order.
+    days.mean <- cumsum(sum.tiles.mean[order(sum.tiles.mean$yday),]$mean.prcp) >= ((sum(sum.tiles.mean$mean.prcp))/2) 
+    days.sum <- cumsum(sum.tiles.sum[order(sum.tiles.sum$yday),]$sum.prcp) >= ((sum(sum.tiles.sum$sum.prcp))/2) 
+    # Now determining the number of days in this vector that are FALSE, which are the days when the 
+    # cumulative precipitation has not yet reached it's halfway point.
+    monsoon.halfway.mean <- length(days.mean[days.mean == FALSE])
+    monsoon.halfway.sum <- length(days.sum[days.sum == FALSE])
+    
+ 
+    # now creating a dataframe with the year value and the number of days to the precipitation halfway 
+    # point, and adding it to our existing dataframe so that the final dataframe will have this value 
+    # for each year
+    year <- i
+    monsoon.halfway.year <- data.frame(year, monsoon.halfway.mean, monsoon.halfway.sum)
+    
+    # renaming the column with total monsoon precip. for each year
+    new.name.mean <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.halfway.mean"))
+    new.name.sum <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.halfway.sum"))
+    
+    monsoon.halfway.year <- monsoon.halfway.year %>% 
+      rename(!!new.name.mean := monsoon.halfway.mean,
+             !!new.name.sum := monsoon.halfway.sum)
+    
+    monsoon.halfway.data[[i]] <- monsoon.halfway.year
+    
+    
+    ##### getting metrics of monsoon start date, end date, and intensity
+    
+    ### final metrics: need estimates of monsoon start date, monsoon end date, and monsoon intensity for every year
+    
+    ## monsoon start date: first time each year that the region had three consecutive 
+    ## days with mean precipitation estimates above the median daily value for June through 
+    ## October
+    
+    ## monsoon end date: first time each year that the region had three consecutive 
+    ## days with mean precipitation estimates above the median daily value for June through 
+    ## October
+    
+    ## monsoon intensity for each year (the number of days between monsoon start and 
+    ## end date that had more precipitation than the median daily value from June through 
+    ## October)
+
+    length <- length(sum.tiles.mean$mean.prcp)
+    median.mean <- median(sum.tiles.mean$mean.prcp)
+    median.sum <- median(sum.tiles.sum$sum.prcp)
+    
+    # for (i in 1:(length - 2)) {
+    #   if (sum.tiles.mean$mean.prcp[i] > median && 
+    #       sum.tiles.mean$mean.prcp[i + 1] > median && 
+    #       sum.tiles.mean$mean.prcp[i + 2] > median) {
+    #     print(paste("Position:", i))
+    #   }
+    # }
+    
+    first_position_mean <- NULL
+    last_position_mean <- NULL
+    for (k in 1:(length - 2)) {
+      if (sum.tiles.mean$mean.prcp[k] > median.mean && 
+          sum.tiles.mean$mean.prcp[k + 1] > median.mean && 
+          sum.tiles.mean$mean.prcp[k + 2] > median.mean) {
+        if (is.null(first_position_mean)) {
+          first_position_mean <- k
+        }
+        last_position_mean <- k + 2
+      }
+    }
+    
+    if (is.null(first_position_mean)) {
+      first_position_mean <- NA
+      last_position_mean <- NA
+    }
+  
+    first_position_sum <- NULL
+    last_position_sum <- NULL
+    for (k in 1:(length - 2)) {
+      if (sum.tiles.sum$sum.prcp[k] > median.sum && 
+          sum.tiles.sum$sum.prcp[k + 1] > median.sum && 
+          sum.tiles.sum$sum.prcp[k + 2] > median.sum) {
+        if (is.null(first_position_sum)) {
+          first_position_sum <- k
+        }
+        last_position_sum <- k + 2
+      }
+    }
+    
+    if (is.null(first_position_sum)) {
+      first_position_sum <- NA
+      last_position_sum <- NA
+    }
+    
+    ## also extracting monsoon intensity
+    intensity_mean <- sum(sum.tiles.mean$mean.prcp > median.mean)
+    intensity_sum <- sum(sum.tiles.sum$sum.prcp > median.sum)
+    
+    
+    
+    monsoon.additional.year <- data.frame(year, first_position_mean, first_position_sum,
+                                          last_position_mean, last_position_sum,
+                                          intensity_mean, intensity_sum)
+    
+    # renaming the column with total monsoon precip. for each year
+    new.name.mean.start <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.start.mean"))
+    new.name.sum.start <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.start.sum"))
+    new.name.mean.end <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.end.mean"))
+    new.name.sum.end <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.end.sum"))
+    new.name.mean.intensity <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.intensity.mean"))
+    new.name.sum.intensity <- (paste0((sub("_tiles", ".", area_names[[j]])),"monsoon.intensity.sum"))
+    
+    monsoon.additional.year  <- monsoon.additional.year  %>% 
+      rename(!!new.name.mean.start := first_position_mean,
+             !!new.name.sum.start := first_position_sum,
+             !!new.name.mean.end := last_position_mean,
+             !!new.name.sum.end := last_position_sum,
+             !!new.name.mean.intensity := intensity_mean,
+             !!new.name.sum.intensity := intensity_sum)
+    
+    monsoon.additional.data[[i]] <- monsoon.additional.year
+    
+    
+  }
+  monsoon.halfway.df <- do.call(rbind, monsoon.halfway.data)
+  monsoon.additional.df <- do.call(rbind, monsoon.additional.data)
+  
+  area.monsoon.dat[[j]] <- Reduce(merge, list(monsoon.wide.prcp, monsoon.early.prcp, monsoon.late.prcp, monsoon.halfway.df, monsoon.additional.df))
+}
+
+regional.prcp.dat <- do.call(cbind, area.monsoon.dat)
+
+# getting rid of duplicate columns
+regional.prcp.dat <-regional.prcp.dat[!duplicated(as.list(regional.prcp.dat))]
+
+write_csv(regional.prcp.dat,"~/Documents/Dissertation Research/Molt Migrant Conservation/regional.prcp.dat.2023.csv")
+write_csv(regional.prcp.dat,"/Volumes/project/CarlingLab/pdoughe1/Molt_migrant_conservation/regional.prcp.dat.2023.csv")
+regional.prcp.dat <- read_csv("regional.prcp.dat.2023.csv")
+
+
+
+
+############# species wrangling############ -------------------------------------------------------
+
+# BUNTINGS ##########################################################
+inbu.bbs <- bbs.dat %>%
+  filter(Species == "Indigo Bunting")
+lazb.bbs <- bbs.dat %>%
+  filter(Species == "Lazuli Bunting")
+
+
+inbu.bbs <- inbu.bbs %>%
+  select(Index, Stratum, Year, Species)
+lazb.bbs <- lazb.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+inbu.bbs$Stratum <- paste('INBU',inbu.bbs$Stratum,sep='_')
+lazb.bbs$Stratum <- paste('LAZB',lazb.bbs$Stratum,sep='_')
+
+
+# spreading to have annual data in BCR
+inbu.bbs <- spread(inbu.bbs , Stratum, Index)
+lazb.bbs <- spread(lazb.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey...maybe should filter down to 
+# BCR's in which mean relative abundance is greater than 1
+inbu.bbs <- inbu.bbs %>% 
+  select_if(function(col){max(col) > 1})
+lazb.bbs <- lazb.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+
+# creating annual abundance change in each BCR for each year
+inbu.bcr.yc <- apply(inbu.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+inbu.bcr.c.o <- apply(inbu.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+lazb.bcr.yc <- apply(lazb.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+lazb.bcr.c.o <- apply(lazb.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+inbu.bcr.yc <- cbind(inbu.bbs[,(1:2)], inbu.bcr.yc)
+lazb.bcr.yc <- cbind(lazb.bbs[,(1:2)], lazb.bcr.yc)
+
+inbu.bcr.c.o <- cbind(inbu.bbs[,(1:2)], inbu.bcr.c.o)
+lazb.bcr.c.o <- cbind(lazb.bbs[,(1:2)], lazb.bcr.c.o)
+
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(inbu.bcr.yc)
+names(lazb.bcr.yc)
+
+inbu.bcr.yc <- inbu.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+  # confusion down the road
+inbu.bcr.c.o <- inbu.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+lazb.bcr.yc <- lazb.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+lazb.bcr.c.o <- lazb.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+inbu.bbs.monsoon.dat <- merge(regional.prcp.dat, inbu.bcr.yc)
+lazb.bbs.monsoon.dat <- merge(regional.prcp.dat, lazb.bcr.yc)
+inbu.bbs.monsoon.c.o <- merge(regional.prcp.dat, inbu.bcr.c.o)
+lazb.bbs.monsoon.c.o <- merge(regional.prcp.dat, lazb.bcr.c.o)
+
+inbu.bbs.monsoon.dat = subset(inbu.bbs.monsoon.dat, select = -c(species))
+lazb.bbs.monsoon.dat = subset(lazb.bbs.monsoon.dat, select = -c(species))
+inbu.bbs.monsoon.c.o = subset(inbu.bbs.monsoon.c.o, select = -c(species))
+lazb.bbs.monsoon.c.o = subset(lazb.bbs.monsoon.c.o, select = -c(species))
+
+# merging the datasets for molt migrant and non-molt migrant species
+buntings.bbs.monsoon.dat <- merge(lazb.bbs.monsoon.dat, inbu.bbs.monsoon.dat)
+buntings.bbs.monsoon.c.o <- merge(lazb.bbs.monsoon.c.o, inbu.bbs.monsoon.c.o)
+
+# examining the continent wide patterns for each species  the datasets for molt migrant and non-molt migrant species
+plot(INBU_continent ~ LAZB_continent, data = buntings.bbs.monsoon.dat)
+
+# now binding landcover data 
+buntings.bbs.monsoon.dat.pland <- merge(buntings.bbs.monsoon.dat, anthro.prop)
+buntings.bbs.monsoon.dat.pland.c.o <- merge(buntings.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+buntings.bbs.monsoon.pland.ndvi <- merge(buntings.bbs.monsoon.dat.pland, ndvi.dat)
+buntings.bbs.monsoon.pland.ndvi.c.o <- merge(buntings.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+
+####CHIPPING SPARROW ###################################################
+chsp.bbs <- bbs.dat %>%
+  filter(Species == "Chipping Sparrow")
+
+chsp.bbs <- chsp.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+chsp.bbs$Stratum <- paste('CHSP',chsp.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+chsp.bbs <- spread(chsp.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+chsp.bbs <- chsp.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+
+# creating annual abundance change in each BCR for each year
+chsp.bcr.yc <- apply(chsp.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+chsp.bcr.c.o <- apply(chsp.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+
+
+# binding annual abundance changes in each BCR to year and species columns
+chsp.bcr.yc <- cbind(chsp.bbs[,(1:2)], chsp.bcr.yc)
+
+chsp.bcr.c.o <- cbind(chsp.bbs[,(1:2)], chsp.bcr.c.o)
+
+
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(chsp.bcr.yc)
+
+chsp.bcr.yc <- chsp.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+chsp.bcr.c.o <- chsp.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+chsp.bbs.monsoon.dat <- merge(regional.prcp.dat, chsp.bcr.yc)
+chsp.bbs.monsoon.c.o <- merge(regional.prcp.dat, chsp.bcr.c.o)
+
+chsp.bbs.monsoon.dat = subset(chsp.bbs.monsoon.dat, select = -c(species))
+chsp.bbs.monsoon.c.o = subset(chsp.bbs.monsoon.c.o, select = -c(species))
+
+# now binding landcover data 
+chsp.bbs.monsoon.dat.pland <- merge(chsp.bbs.monsoon.dat, anthro.prop)
+chsp.bbs.monsoon.dat.pland.c.o <- merge(chsp.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+chsp.bbs.monsoon.pland.ndvi <- merge(chsp.bbs.monsoon.dat.pland, ndvi.dat)
+chsp.bbs.monsoon.pland.ndvi.c.o <- merge(chsp.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+####LARK SPARROW ###################################################
+lasp.bbs <- bbs.dat %>%
+  filter(Species == "Lark Sparrow")
+
+lasp.bbs <- lasp.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+lasp.bbs$Stratum <- paste('LASP',lasp.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+lasp.bbs <- spread(lasp.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+lasp.bbs <- lasp.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+lasp.bcr.yc <- apply(lasp.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+lasp.bcr.c.o <- apply(lasp.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+lasp.bcr.yc <- cbind(lasp.bbs[,(1:2)], lasp.bcr.yc)
+
+lasp.bcr.c.o <- cbind(lasp.bbs[,(1:2)], lasp.bcr.c.o)
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(lasp.bcr.yc)
+
+lasp.bcr.yc <- lasp.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+lasp.bcr.c.o <- lasp.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+lasp.bbs.monsoon.dat <- merge(regional.prcp.dat, lasp.bcr.yc)
+lasp.bbs.monsoon.c.o <- merge(regional.prcp.dat, lasp.bcr.c.o)
+
+lasp.bbs.monsoon.dat = subset(lasp.bbs.monsoon.dat, select = -c(species))
+lasp.bbs.monsoon.c.o = subset(lasp.bbs.monsoon.c.o, select = -c(species))
+
+# now binding landcover data 
+lasp.bbs.monsoon.dat.pland <- merge(lasp.bbs.monsoon.dat, anthro.prop)
+lasp.bbs.monsoon.dat.pland.c.o <- merge(lasp.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+lasp.bbs.monsoon.pland.ndvi <- merge(lasp.bbs.monsoon.dat.pland, ndvi.dat)
+lasp.bbs.monsoon.pland.ndvi.c.o <- merge(lasp.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+####WARBLING VIREO ###################################################
+wavi.bbs <- bbs.dat %>%
+  filter(Species == "Warbling Vireo")
+
+wavi.bbs <- wavi.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+wavi.bbs$Stratum <- paste('WAVI',wavi.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+wavi.bbs <- spread(wavi.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+wavi.bbs <- wavi.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+wavi.bcr.yc <- apply(wavi.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+wavi.bcr.c.o <- apply(wavi.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+wavi.bcr.yc <- cbind(wavi.bbs[,(1:2)], wavi.bcr.yc)
+
+wavi.bcr.c.o <- cbind(wavi.bbs[,(1:2)], wavi.bcr.c.o)
+
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(wavi.bcr.yc)
+
+wavi.bcr.yc <- wavi.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+wavi.bcr.c.o <- wavi.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+wavi.bbs.monsoon.dat <- merge(regional.prcp.dat, wavi.bcr.yc)
+wavi.bbs.monsoon.c.o <- merge(regional.prcp.dat, wavi.bcr.c.o)
+
+wavi.bbs.monsoon.dat = subset(wavi.bbs.monsoon.dat, select = -c(species))
+wavi.bbs.monsoon.c.o = subset(wavi.bbs.monsoon.c.o, select = -c(species))
+
+# now binding landcover data 
+wavi.bbs.monsoon.dat.pland <- merge(wavi.bbs.monsoon.dat, anthro.prop)
+wavi.bbs.monsoon.dat.pland.c.o <- merge(wavi.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+wavi.bbs.monsoon.pland.ndvi <- merge(wavi.bbs.monsoon.dat.pland, ndvi.dat)
+wavi.bbs.monsoon.pland.ndvi.c.o <- merge(wavi.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+#### PAINTED BUNTING ###################################################
+pabu.bbs <- bbs.dat %>%
+  filter(Species == "Painted Bunting")
+
+pabu.bbs <- pabu.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+pabu.bbs$Stratum <- paste('PABU',pabu.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+pabu.bbs <- spread(pabu.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+pabu.bbs <- pabu.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+pabu.bcr.yc <- apply(pabu.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+pabu.bcr.c.o <- apply(pabu.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+pabu.bcr.yc <- cbind(pabu.bbs[,(1:2)], pabu.bcr.yc)
+
+pabu.bcr.c.o <- cbind(pabu.bbs[,(1:2)], pabu.bcr.c.o)
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(pabu.bcr.yc)
+
+pabu.bcr.yc <- pabu.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+pabu.bcr.c.o <- pabu.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+pabu.bbs.monsoon.dat <- merge(regional.prcp.dat, pabu.bcr.yc)
+pabu.bbs.monsoon.c.o <- merge(regional.prcp.dat, pabu.bcr.c.o)
+
+pabu.bbs.monsoon.dat = subset(pabu.bbs.monsoon.dat, select = -c(species))
+pabu.bbs.monsoon.c.o = subset(pabu.bbs.monsoon.c.o, select = -c(species))
+
+# now binding landcover data 
+pabu.bbs.monsoon.dat.pland <- merge(pabu.bbs.monsoon.dat, anthro.prop)
+pabu.bbs.monsoon.dat.pland.c.o <- merge(pabu.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+pabu.bbs.monsoon.pland.ndvi <- merge(pabu.bbs.monsoon.dat.pland, ndvi.dat)
+pabu.bbs.monsoon.pland.ndvi.c.o <- merge(pabu.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+#### ORIOLES ###################################################
+buor.bbs <- bbs.dat %>%
+  filter(Species == "Bullock's Oriole")
+baor.bbs <- bbs.dat %>%
+  filter(Species == "Baltimore Oriole")
+
+buor.bbs <- buor.bbs %>%
+  select(Index, Stratum, Year, Species)
+baor.bbs <- baor.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+buor.bbs$Stratum <- paste('BUOR',buor.bbs$Stratum,sep='_')
+baor.bbs$Stratum <- paste('BAOR',baor.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+buor.bbs <- spread(buor.bbs , Stratum, Index)
+baor.bbs <- spread(baor.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+buor.bbs <- buor.bbs %>% 
+  select_if(function(col){max(col) > 1})
+baor.bbs <- baor.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+baor.bcr.yc <- apply(baor.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+baor.bcr.c.o <- apply(baor.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+buor.bcr.yc <- apply(buor.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+buor.bcr.c.o <- apply(buor.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+baor.bcr.yc <- cbind(baor.bbs[,(1:2)], baor.bcr.yc)
+buor.bcr.yc <- cbind(buor.bbs[,(1:2)], buor.bcr.yc)
+
+baor.bcr.c.o <- cbind(baor.bbs[,(1:2)], baor.bcr.c.o)
+buor.bcr.c.o <- cbind(buor.bbs[,(1:2)], buor.bcr.c.o)
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(baor.bcr.yc)
+names(buor.bcr.yc)
+
+baor.bcr.yc <- baor.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+baor.bcr.c.o <- baor.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+buor.bcr.yc <- buor.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+buor.bcr.c.o <- buor.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+baor.bbs.monsoon.dat <- merge(regional.prcp.dat, baor.bcr.yc)
+buor.bbs.monsoon.dat <- merge(regional.prcp.dat, buor.bcr.yc)
+baor.bbs.monsoon.c.o <- merge(regional.prcp.dat, baor.bcr.c.o)
+buor.bbs.monsoon.c.o <- merge(regional.prcp.dat, buor.bcr.c.o)
+
+baor.bbs.monsoon.dat = subset(baor.bbs.monsoon.dat, select = -c(species) )
+buor.bbs.monsoon.dat = subset(buor.bbs.monsoon.dat, select = -c(species) )
+baor.bbs.monsoon.c.o = subset(baor.bbs.monsoon.c.o, select = -c(species) )
+buor.bbs.monsoon.c.o = subset(buor.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+orioles.bbs.monsoon.dat <- merge(buor.bbs.monsoon.dat, baor.bbs.monsoon.dat)
+orioles.bbs.monsoon.c.o <- merge(buor.bbs.monsoon.c.o, baor.bbs.monsoon.c.o)
+
+# now binding landcover data 
+orioles.bbs.monsoon.dat.pland <- merge(orioles.bbs.monsoon.dat, anthro.prop)
+orioles.bbs.monsoon.dat.pland.c.o <- merge(orioles.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+orioles.bbs.monsoon.pland.ndvi <- merge(orioles.bbs.monsoon.dat.pland, ndvi.dat)
+orioles.bbs.monsoon.pland.ndvi.c.o <- merge(orioles.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+######KINGBIRDS ########################
+weki.bbs <- bbs.dat %>%
+  filter(Species == "Western Kingbird")
+eaki.bbs <- bbs.dat %>%
+  filter(Species == "Eastern Kingbird")
+
+weki.bbs <- weki.bbs %>%
+  select(Index, Stratum, Year, Species)
+eaki.bbs <- eaki.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+weki.bbs$Stratum <- paste('WEKI',weki.bbs$Stratum,sep='_')
+eaki.bbs$Stratum <- paste('EAKI',eaki.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+weki.bbs <- spread(weki.bbs , Stratum, Index)
+eaki.bbs <- spread(eaki.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+weki.bbs <- weki.bbs %>% 
+  select_if(function(col){max(col) > 1})
+eaki.bbs <- eaki.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+eaki.bcr.yc <- apply(eaki.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+eaki.bcr.c.o <- apply(eaki.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+weki.bcr.yc <- apply(weki.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+weki.bcr.c.o <- apply(weki.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+eaki.bcr.yc <- cbind(eaki.bbs[,(1:2)], eaki.bcr.yc)
+weki.bcr.yc <- cbind(weki.bbs[,(1:2)], weki.bcr.yc)
+
+eaki.bcr.c.o <- cbind(eaki.bbs[,(1:2)], eaki.bcr.c.o)
+weki.bcr.c.o <- cbind(weki.bbs[,(1:2)], weki.bcr.c.o)
+
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(eaki.bcr.yc)
+names(weki.bcr.yc)
+
+eaki.bcr.yc <- eaki.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+eaki.bcr.c.o <- eaki.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+weki.bcr.yc <- weki.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+weki.bcr.c.o <- weki.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+eaki.bbs.monsoon.dat <- merge(regional.prcp.dat, eaki.bcr.yc)
+weki.bbs.monsoon.dat <- merge(regional.prcp.dat, weki.bcr.yc)
+eaki.bbs.monsoon.c.o <- merge(regional.prcp.dat, eaki.bcr.c.o)
+weki.bbs.monsoon.c.o <- merge(regional.prcp.dat, weki.bcr.c.o)
+
+eaki.bbs.monsoon.dat = subset(eaki.bbs.monsoon.dat, select = -c(species) )
+weki.bbs.monsoon.dat = subset(weki.bbs.monsoon.dat, select = -c(species) )
+eaki.bbs.monsoon.c.o = subset(eaki.bbs.monsoon.c.o, select = -c(species) )
+weki.bbs.monsoon.c.o = subset(weki.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+kingbirds.bbs.monsoon.dat <- merge(weki.bbs.monsoon.dat, eaki.bbs.monsoon.dat)
+kingbirds.bbs.monsoon.c.o <- merge(weki.bbs.monsoon.c.o, eaki.bbs.monsoon.c.o)
+
+# now binding landcover data 
+kingbirds.bbs.monsoon.dat.pland <- merge(kingbirds.bbs.monsoon.dat, anthro.prop)
+kingbirds.bbs.monsoon.dat.pland.c.o <- merge(kingbirds.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+kingbirds.bbs.monsoon.pland.ndvi <- merge(kingbirds.bbs.monsoon.dat.pland, ndvi.dat)
+kingbirds.bbs.monsoon.pland.ndvi.c.o <- merge(kingbirds.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+#### FLYCATCHERS ###################################################
+atfl.bbs <- bbs.dat %>%
+  filter(Species == "Ash-throated Flycatcher")
+gcfl.bbs <- bbs.dat %>%
+  filter(Species == "Great Crested Flycatcher")
+
+atfl.bbs <- atfl.bbs %>%
+  select(Index, Stratum, Year, Species)
+gcfl.bbs <- gcfl.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+atfl.bbs$Stratum <- paste('ATFL',atfl.bbs$Stratum,sep='_')
+gcfl.bbs$Stratum <- paste('GCFL',gcfl.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+atfl.bbs <- spread(atfl.bbs , Stratum, Index)
+gcfl.bbs <- spread(gcfl.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+atfl.bbs <- atfl.bbs %>% 
+  select_if(function(col){max(col) > 1})
+gcfl.bbs <- gcfl.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+gcfl.bcr.yc <- apply(gcfl.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+gcfl.bcr.c.o <- apply(gcfl.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+atfl.bcr.yc <- apply(atfl.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+atfl.bcr.c.o <- apply(atfl.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+gcfl.bcr.yc <- cbind(gcfl.bbs[,(1:2)], gcfl.bcr.yc)
+atfl.bcr.yc <- cbind(atfl.bbs[,(1:2)], atfl.bcr.yc)
+
+gcfl.bcr.c.o <- cbind(gcfl.bbs[,(1:2)], gcfl.bcr.c.o)
+atfl.bcr.c.o <- cbind(atfl.bbs[,(1:2)], atfl.bcr.c.o)
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(gcfl.bcr.yc)
+names(atfl.bcr.yc)
+
+gcfl.bcr.yc <- gcfl.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+gcfl.bcr.c.o <- gcfl.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+atfl.bcr.yc <- atfl.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+atfl.bcr.c.o <- atfl.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+gcfl.bbs.monsoon.dat <- merge(regional.prcp.dat, gcfl.bcr.yc)
+atfl.bbs.monsoon.dat <- merge(regional.prcp.dat, atfl.bcr.yc)
+gcfl.bbs.monsoon.c.o <- merge(regional.prcp.dat, gcfl.bcr.c.o)
+atfl.bbs.monsoon.c.o <- merge(regional.prcp.dat, atfl.bcr.c.o)
+
+gcfl.bbs.monsoon.dat = subset(gcfl.bbs.monsoon.dat, select = -c(species) )
+atfl.bbs.monsoon.dat = subset(atfl.bbs.monsoon.dat, select = -c(species) )
+gcfl.bbs.monsoon.c.o = subset(gcfl.bbs.monsoon.c.o, select = -c(species) )
+atfl.bbs.monsoon.c.o = subset(atfl.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+flycatchers.bbs.monsoon.dat <- merge(atfl.bbs.monsoon.dat, gcfl.bbs.monsoon.dat)
+flycatchers.bbs.monsoon.c.o <- merge(atfl.bbs.monsoon.c.o, gcfl.bbs.monsoon.c.o)
+
+# now binding landcover data 
+flycatchers.bbs.monsoon.dat.pland <- merge(flycatchers.bbs.monsoon.dat, anthro.prop)
+flycatchers.bbs.monsoon.dat.pland.c.o <- merge(flycatchers.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+flycatchers.bbs.monsoon.pland.ndvi <- merge(flycatchers.bbs.monsoon.dat.pland, ndvi.dat)
+flycatchers.bbs.monsoon.pland.ndvi.c.o <- merge(flycatchers.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+#### GOLDFINCHES ###################################################
+amgo.bbs <- bbs.dat %>%
+  filter(Species == "American Goldfinch")
+lego.bbs <- bbs.dat %>%
+  filter(Species == "Lesser Goldfinch")
+
+amgo.bbs <- amgo.bbs %>%
+  select(Index, Stratum, Year, Species)
+lego.bbs <- lego.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+amgo.bbs$Stratum <- paste('AMGO',amgo.bbs$Stratum,sep='_')
+lego.bbs$Stratum <- paste('LEGO',lego.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+amgo.bbs <- spread(amgo.bbs , Stratum, Index)
+lego.bbs <- spread(lego.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+amgo.bbs <- amgo.bbs %>% 
+  select_if(function(col){max(col) > 1})
+lego.bbs <- lego.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+amgo.bcr.yc <- apply(amgo.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+amgo.bcr.c.o <- apply(amgo.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+lego.bcr.yc <- apply(lego.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+lego.bcr.c.o <- apply(lego.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+amgo.bcr.yc <- cbind(amgo.bbs[,(1:2)], amgo.bcr.yc)
+lego.bcr.yc <- cbind(lego.bbs[,(1:2)], lego.bcr.yc)
+
+amgo.bcr.c.o <- cbind(amgo.bbs[,(1:2)], amgo.bcr.c.o)
+lego.bcr.c.o <- cbind(lego.bbs[,(1:2)], lego.bcr.c.o)
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(amgo.bcr.yc)
+names(lego.bcr.yc)
+
+amgo.bcr.yc <- amgo.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+amgo.bcr.c.o <- amgo.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+lego.bcr.yc <- lego.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+lego.bcr.c.o <- lego.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+amgo.bbs.monsoon.dat <- merge(regional.prcp.dat, amgo.bcr.yc)
+lego.bbs.monsoon.dat <- merge(regional.prcp.dat, lego.bcr.yc)
+amgo.bbs.monsoon.c.o <- merge(regional.prcp.dat, amgo.bcr.c.o)
+lego.bbs.monsoon.c.o <- merge(regional.prcp.dat, lego.bcr.c.o)
+
+amgo.bbs.monsoon.dat = subset(amgo.bbs.monsoon.dat, select = -c(species) )
+lego.bbs.monsoon.dat = subset(lego.bbs.monsoon.dat, select = -c(species) )
+amgo.bbs.monsoon.c.o = subset(amgo.bbs.monsoon.c.o, select = -c(species) )
+lego.bbs.monsoon.c.o = subset(lego.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+goldfinches.bbs.monsoon.dat <- merge(lego.bbs.monsoon.dat, amgo.bbs.monsoon.dat)
+goldfinches.bbs.monsoon.c.o <- merge(lego.bbs.monsoon.c.o, amgo.bbs.monsoon.c.o)
+
+# now binding landcover data 
+goldfinches.bbs.monsoon.dat.pland <- merge(goldfinches.bbs.monsoon.dat, anthro.prop)
+goldfinches.bbs.monsoon.dat.pland.c.o <- merge(goldfinches.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+goldfinches.bbs.monsoon.pland.ndvi <- merge(goldfinches.bbs.monsoon.dat.pland, ndvi.dat)
+goldfinches.bbs.monsoon.pland.ndvi.c.o <- merge(goldfinches.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+
+#### WARBLERS ###################################################
+luwa.bbs <- bbs.dat %>%
+  filter(Species == "Lucy's Warbler")
+viwa.bbs <- bbs.dat %>%
+  filter(Species == "Virginia's Warbler")
+
+luwa.bbs <- luwa.bbs %>%
+  select(Index, Stratum, Year, Species)
+viwa.bbs <- viwa.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+luwa.bbs$Stratum <- paste('LUWA',luwa.bbs$Stratum,sep='_')
+viwa.bbs$Stratum <- paste('VIWA',viwa.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+luwa.bbs <- spread(luwa.bbs , Stratum, Index)
+viwa.bbs <- spread(viwa.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+luwa.bbs <- luwa.bbs %>% 
+  select_if(function(col){max(col) > 1})
+viwa.bbs <- viwa.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+viwa.bcr.yc <- apply(viwa.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+viwa.bcr.c.o <- apply(viwa.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+luwa.bcr.yc <- apply(luwa.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+luwa.bcr.c.o <- apply(luwa.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+viwa.bcr.yc <- cbind(viwa.bbs[,(1:2)], viwa.bcr.yc)
+luwa.bcr.yc <- cbind(luwa.bbs[,(1:2)], luwa.bcr.yc)
+
+viwa.bcr.c.o <- cbind(viwa.bbs[,(1:2)], viwa.bcr.c.o)
+luwa.bcr.c.o <- cbind(luwa.bbs[,(1:2)], luwa.bcr.c.o)
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(viwa.bcr.yc)
+names(luwa.bcr.yc)
+
+viwa.bcr.yc <- viwa.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+viwa.bcr.c.o <- viwa.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+luwa.bcr.yc <- luwa.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+luwa.bcr.c.o <- luwa.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+viwa.bbs.monsoon.dat <- merge(regional.prcp.dat, viwa.bcr.yc)
+luwa.bbs.monsoon.dat <- merge(regional.prcp.dat, luwa.bcr.yc)
+viwa.bbs.monsoon.c.o <- merge(regional.prcp.dat, viwa.bcr.c.o)
+luwa.bbs.monsoon.c.o <- merge(regional.prcp.dat, luwa.bcr.c.o)
+
+viwa.bbs.monsoon.dat = subset(viwa.bbs.monsoon.dat, select = -c(species) )
+luwa.bbs.monsoon.dat = subset(luwa.bbs.monsoon.dat, select = -c(species) )
+viwa.bbs.monsoon.c.o = subset(viwa.bbs.monsoon.c.o, select = -c(species) )
+luwa.bbs.monsoon.c.o = subset(luwa.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+warblers.bbs.monsoon.dat <- merge(luwa.bbs.monsoon.dat, viwa.bbs.monsoon.dat)
+warblers.bbs.monsoon.c.o <- merge(luwa.bbs.monsoon.c.o, viwa.bbs.monsoon.c.o)
+
+# now binding landcover data 
+warblers.bbs.monsoon.dat.pland <- merge(warblers.bbs.monsoon.dat, anthro.prop)
+warblers.bbs.monsoon.dat.pland.c.o <- merge(warblers.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+warblers.bbs.monsoon.pland.ndvi <- merge(warblers.bbs.monsoon.dat.pland, ndvi.dat)
+warblers.bbs.monsoon.pland.ndvi.c.o <- merge(warblers.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+#### TANAGERS ###################################################
+scta.bbs <- bbs.dat %>%
+  filter(Species == "Scarlet Tanager")
+weta.bbs <- bbs.dat %>%
+  filter(Species == "Western Tanager")
+
+scta.bbs <- scta.bbs %>%
+  select(Index, Stratum, Year, Species)
+weta.bbs <- weta.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+scta.bbs$Stratum <- paste('SCTA',scta.bbs$Stratum,sep='_')
+weta.bbs$Stratum <- paste('WETA',weta.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+scta.bbs <- spread(scta.bbs , Stratum, Index)
+weta.bbs <- spread(weta.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+scta.bbs <- scta.bbs %>% 
+  select_if(function(col){max(col) > 1})
+weta.bbs <- weta.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+scta.bcr.yc <- apply(scta.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+scta.bcr.c.o <- apply(scta.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+weta.bcr.yc <- apply(weta.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+weta.bcr.c.o <- apply(weta.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+scta.bcr.yc <- cbind(scta.bbs[,(1:2)], scta.bcr.yc)
+weta.bcr.yc <- cbind(weta.bbs[,(1:2)], weta.bcr.yc)
+
+scta.bcr.c.o <- cbind(scta.bbs[,(1:2)], scta.bcr.c.o)
+weta.bcr.c.o <- cbind(weta.bbs[,(1:2)], weta.bcr.c.o)
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(scta.bcr.yc)
+names(weta.bcr.yc)
+
+scta.bcr.yc <- scta.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+scta.bcr.c.o <- scta.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+weta.bcr.yc <- weta.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+weta.bcr.c.o <- weta.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+scta.bbs.monsoon.dat <- merge(regional.prcp.dat, scta.bcr.yc)
+weta.bbs.monsoon.dat <- merge(regional.prcp.dat, weta.bcr.yc)
+scta.bbs.monsoon.c.o <- merge(regional.prcp.dat, scta.bcr.c.o)
+weta.bbs.monsoon.c.o <- merge(regional.prcp.dat, weta.bcr.c.o)
+
+scta.bbs.monsoon.dat = subset(scta.bbs.monsoon.dat, select = -c(species) )
+weta.bbs.monsoon.dat = subset(weta.bbs.monsoon.dat, select = -c(species) )
+scta.bbs.monsoon.c.o = subset(scta.bbs.monsoon.c.o, select = -c(species) )
+weta.bbs.monsoon.c.o = subset(weta.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+tanagers.bbs.monsoon.dat <- merge(weta.bbs.monsoon.dat, scta.bbs.monsoon.dat)
+tanagers.bbs.monsoon.c.o <- merge(weta.bbs.monsoon.c.o, scta.bbs.monsoon.c.o)
+
+# now binding landcover data 
+tanagers.bbs.monsoon.dat.pland <- merge(tanagers.bbs.monsoon.dat, anthro.prop)
+tanagers.bbs.monsoon.dat.pland.c.o <- merge(tanagers.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+tanagers.bbs.monsoon.pland.ndvi <- merge(tanagers.bbs.monsoon.dat.pland, ndvi.dat)
+tanagers.bbs.monsoon.pland.ndvi.c.o <- merge(tanagers.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+
+#### GROSBEAKS ###################################################
+rbgr.bbs <- bbs.dat %>%
+  filter(Species == "Rose-breasted Grosbeak")
+bhgr.bbs <- bbs.dat %>%
+  filter(Species == "Black-headed Grosbeak")
+
+rbgr.bbs <- rbgr.bbs %>%
+  select(Index, Stratum, Year, Species)
+bhgr.bbs <- bhgr.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+rbgr.bbs$Stratum <- paste('RBGR',rbgr.bbs$Stratum,sep='_')
+bhgr.bbs$Stratum <- paste('BHGR',bhgr.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+rbgr.bbs <- spread(rbgr.bbs , Stratum, Index)
+bhgr.bbs <- spread(bhgr.bbs , Stratum, Index)
+
+# getting rid of BCR's that where more than 1 individual is never 
+# predicted to occur on a survey
+rbgr.bbs <- rbgr.bbs %>% 
+  select_if(function(col){max(col) > 1})
+bhgr.bbs <- bhgr.bbs %>% 
+  select_if(function(col){max(col) > 1})
+
+# creating annual abundance change in each BCR for each year
+rbgr.bcr.yc <- apply(rbgr.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+rbgr.bcr.c.o <- apply(rbgr.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+bhgr.bcr.yc <- apply(bhgr.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+bhgr.bcr.c.o <- apply(bhgr.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+# binding annual abundance changes in each BCR to year and species columns
+rbgr.bcr.yc <- cbind(rbgr.bbs[,(1:2)], rbgr.bcr.yc)
+bhgr.bcr.yc <- cbind(bhgr.bbs[,(1:2)], bhgr.bcr.yc)
+
+rbgr.bcr.c.o <- cbind(rbgr.bbs[,(1:2)], rbgr.bcr.c.o)
+bhgr.bcr.c.o <- cbind(bhgr.bbs[,(1:2)], bhgr.bcr.c.o)
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(rbgr.bcr.yc)
+names(bhgr.bcr.yc)
+
+rbgr.bcr.yc <- rbgr.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+rbgr.bcr.c.o <- rbgr.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+bhgr.bcr.yc <- bhgr.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+bhgr.bcr.c.o <- bhgr.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+rbgr.bbs.monsoon.dat <- merge(regional.prcp.dat, rbgr.bcr.yc)
+bhgr.bbs.monsoon.dat <- merge(regional.prcp.dat, bhgr.bcr.yc)
+rbgr.bbs.monsoon.c.o <- merge(regional.prcp.dat, rbgr.bcr.c.o)
+bhgr.bbs.monsoon.c.o <- merge(regional.prcp.dat, bhgr.bcr.c.o)
+
+rbgr.bbs.monsoon.dat = subset(rbgr.bbs.monsoon.dat, select = -c(species) )
+bhgr.bbs.monsoon.dat = subset(bhgr.bbs.monsoon.dat, select = -c(species) )
+rbgr.bbs.monsoon.c.o = subset(rbgr.bbs.monsoon.c.o, select = -c(species) )
+bhgr.bbs.monsoon.c.o = subset(bhgr.bbs.monsoon.c.o, select = -c(species) )
+
+# merging the datasets for molt migrant and non-molt migrant species
+grosbeaks.bbs.monsoon.dat <- merge(bhgr.bbs.monsoon.dat, rbgr.bbs.monsoon.dat)
+grosbeaks.bbs.monsoon.c.o <- merge(bhgr.bbs.monsoon.c.o, rbgr.bbs.monsoon.c.o)
+
+
+# now binding landcover data 
+grosbeaks.bbs.monsoon.dat.pland <- merge(grosbeaks.bbs.monsoon.dat, anthro.prop)
+grosbeaks.bbs.monsoon.dat.pland.c.o <- merge(grosbeaks.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+grosbeaks.bbs.monsoon.pland.ndvi <- merge(grosbeaks.bbs.monsoon.dat.pland, ndvi.dat)
+grosbeaks.bbs.monsoon.pland.ndvi.c.o <- merge(grosbeaks.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+# ORCHARD ORIOLE ----------------------------------------------------------
+oror.bbs <- bbs.dat %>%
+  filter(Species == "Orchard Oriole")
+
+oror.bbs <- oror.bbs %>%
+  select(Index, Stratum, Year, Species)
+
+# Renaming data for BCR to include species name
+oror.bbs$Stratum <- paste('OROR',oror.bbs$Stratum,sep='_')
+
+# spreading to have annual data in BCR
+oror.bbs <- spread(oror.bbs , Stratum, Index)
+
+# creating annual abundance change in each BCR for each year
+oror.bcr.yc <- apply(oror.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(x)
+  
+  data.table::shift(y, n=-1) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+oror.bcr.c.o <- apply(oror.bbs[,-(1:2)], 2, function(x,y){ # Applying this function over all columns 
+  # in our dataframe, except for our first two columns, which are the year and species name columns
+  
+  y <- x - lag(lag(x))
+  
+  shift(y, n=-2) #shifting up so get the breeding abundance change linked to previous fall monsoon
+})
+
+
+# binding annual abundance changes in each BCR to year and species columns
+oror.bcr.yc <- cbind(oror.bbs[,(1:2)], oror.bcr.yc)
+oror.bcr.c.o <- cbind(oror.bbs[,(1:2)], oror.bcr.c.o)
+
+
+# Combining the BBS data and monsoon precipitation data into a single dataframe --------
+
+# making sure names match
+names(regional.prcp.dat)
+names(oror.bcr.yc)
+
+oror.bcr.yc <- oror.bcr.yc %>% 
+  rename(year = Year) %>%
+  rename(species = Species) #might as well make species lowercase as well, just to prevent
+# confusion down the road
+oror.bcr.c.o <- oror.bcr.c.o %>% 
+  rename(year = Year) %>%
+  rename(species = Species)
+
+##combining the bbs and monsoon datasets 
+oror.bbs.monsoon.dat <- merge(regional.prcp.dat, oror.bcr.yc)
+oror.bbs.monsoon.c.o <- merge(regional.prcp.dat, oror.bcr.c.o)
+
+oror.bbs.monsoon.dat = subset(oror.bbs.monsoon.dat, select = -c(species))
+oror.bbs.monsoon.c.o = subset(oror.bbs.monsoon.c.o, select = -c(species))
+
+# now binding landcover data 
+oror.bbs.monsoon.dat.pland <- merge(oror.bbs.monsoon.dat, anthro.prop)
+oror.bbs.monsoon.dat.pland.c.o <- merge(oror.bbs.monsoon.c.o, anthro.prop)
+
+# now binding ndvi data
+oror.bbs.monsoon.pland.ndvi <- merge(oror.bbs.monsoon.dat.pland, ndvi.dat)
+oror.bbs.monsoon.pland.ndvi.c.o <- merge(oror.bbs.monsoon.dat.pland.c.o, ndvi.dat)
+
+
+# NA filtering ----------------------------------------------------------------
+na.buntings.ndvi <- na.omit(buntings.bbs.monsoon.pland.ndvi)
+na.buntings.pland <- na.omit(buntings.bbs.monsoon.dat.pland)
+na.buntings <- na.omit(buntings.bbs.monsoon.dat)
+na.buntings.ndvi.c.o <- na.omit(buntings.bbs.monsoon.pland.ndvi.c.o)
+na.buntings.pland.c.o <- na.omit(buntings.bbs.monsoon.dat.pland.c.o)
+na.buntings.c.o <- na.omit(buntings.bbs.monsoon.c.o)
+
+na.orioles.ndvi <- na.omit(orioles.bbs.monsoon.pland.ndvi)
+na.orioles.pland <- na.omit(orioles.bbs.monsoon.dat.pland)
+na.orioles <- na.omit(orioles.bbs.monsoon.dat)
+na.orioles.ndvi.c.o <- na.omit(orioles.bbs.monsoon.pland.ndvi.c.o)
+na.orioles.pland.c.o <- na.omit(orioles.bbs.monsoon.dat.pland.c.o)
+na.orioles.c.o <- na.omit(orioles.bbs.monsoon.c.o)
+
+na.pabu.ndvi <- na.omit(pabu.bbs.monsoon.pland.ndvi)
+na.pabu.pland <- na.omit(pabu.bbs.monsoon.dat.pland)
+na.pabu <- na.omit(pabu.bbs.monsoon.dat)
+na.pabu.ndvi.c.o <- na.omit(pabu.bbs.monsoon.pland.ndvi.c.o)
+na.pabu.pland.c.o <- na.omit(pabu.bbs.monsoon.dat.pland.c.o)
+na.pabu.c.o <- na.omit(pabu.bbs.monsoon.c.o)
+
+na.tanagers.ndvi <- na.omit(tanagers.bbs.monsoon.pland.ndvi)
+na.tanagers.pland <- na.omit(tanagers.bbs.monsoon.dat.pland)
+na.tanagers <- na.omit(tanagers.bbs.monsoon.dat)
+na.tanagers.ndvi.c.o <- na.omit(tanagers.bbs.monsoon.pland.ndvi.c.o)
+na.tanagers.pland.c.o <- na.omit(tanagers.bbs.monsoon.dat.pland.c.o)
+na.tanagers.c.o <- na.omit(tanagers.bbs.monsoon.c.o)
+
+na.goldfinches.ndvi <- na.omit(goldfinches.bbs.monsoon.pland.ndvi)
+na.goldfinches.pland <- na.omit(goldfinches.bbs.monsoon.dat.pland)
+na.goldfinches <- na.omit(goldfinches.bbs.monsoon.dat)
+na.goldfinches.ndvi.c.o <- na.omit(goldfinches.bbs.monsoon.pland.ndvi.c.o)
+na.goldfinches.pland.c.o <- na.omit(goldfinches.bbs.monsoon.dat.pland.c.o)
+na.goldfinches.c.o <- na.omit(goldfinches.bbs.monsoon.c.o)
+
+na.grosbeaks.ndvi <- na.omit(grosbeaks.bbs.monsoon.pland.ndvi)
+na.grosbeaks.pland <- na.omit(grosbeaks.bbs.monsoon.dat.pland)
+na.grosbeaks <- na.omit(grosbeaks.bbs.monsoon.dat)
+na.grosbeaks.ndvi.c.o <- na.omit(grosbeaks.bbs.monsoon.pland.ndvi.c.o)
+na.grosbeaks.pland.c.o <- na.omit(grosbeaks.bbs.monsoon.dat.pland.c.o)
+na.grosbeaks.c.o <- na.omit(grosbeaks.bbs.monsoon.c.o)
+
+na.warblers.ndvi <- na.omit(warblers.bbs.monsoon.pland.ndvi)
+na.warblers.pland <- na.omit(warblers.bbs.monsoon.dat.pland)
+na.warblers <- na.omit(warblers.bbs.monsoon.dat)
+na.warblers.ndvi.c.o <- na.omit(warblers.bbs.monsoon.pland.ndvi.c.o)
+na.warblers.pland.c.o <- na.omit(warblers.bbs.monsoon.dat.pland.c.o)
+na.warblers.c.o <- na.omit(warblers.bbs.monsoon.c.o)
+
+na.flycatchers.ndvi <- na.omit(flycatchers.bbs.monsoon.pland.ndvi)
+na.flycatchers.pland <- na.omit(flycatchers.bbs.monsoon.dat.pland)
+na.flycatchers <- na.omit(flycatchers.bbs.monsoon.dat)
+na.flycatchers.ndvi.c.o <- na.omit(flycatchers.bbs.monsoon.pland.ndvi.c.o)
+na.flycatchers.pland.c.o <- na.omit(flycatchers.bbs.monsoon.dat.pland.c.o)
+na.flycatchers.c.o <- na.omit(flycatchers.bbs.monsoon.c.o)
+
+na.lasp.ndvi <- na.omit(lasp.bbs.monsoon.pland.ndvi)
+na.lasp.pland <- na.omit(lasp.bbs.monsoon.dat.pland)
+na.lasp <- na.omit(lasp.bbs.monsoon.dat)
+na.lasp.ndvi.c.o <- na.omit(lasp.bbs.monsoon.pland.ndvi.c.o)
+na.lasp.pland.c.o <- na.omit(lasp.bbs.monsoon.dat.pland.c.o)
+na.lasp.c.o <- na.omit(lasp.bbs.monsoon.c.o)
+
+na.chsp.ndvi <- na.omit(chsp.bbs.monsoon.pland.ndvi)
+na.chsp.pland <- na.omit(chsp.bbs.monsoon.dat.pland)
+na.chsp <- na.omit(chsp.bbs.monsoon.dat)
+na.chsp.ndvi.c.o <- na.omit(chsp.bbs.monsoon.pland.ndvi.c.o)
+na.chsp.pland.c.o <- na.omit(chsp.bbs.monsoon.dat.pland.c.o)
+na.chsp.c.o <- na.omit(chsp.bbs.monsoon.c.o)
+
+na.wavi.ndvi <- na.omit(wavi.bbs.monsoon.pland.ndvi)
+na.wavi.pland <- na.omit(wavi.bbs.monsoon.dat.pland)
+na.wavi <- na.omit(wavi.bbs.monsoon.dat)
+na.wavi.ndvi.c.o <- na.omit(wavi.bbs.monsoon.pland.ndvi.c.o)
+na.wavi.pland.c.o <- na.omit(wavi.bbs.monsoon.dat.pland.c.o)
+na.wavi.c.o <- na.omit(wavi.bbs.monsoon.c.o)
+
+na.kingbirds.ndvi <- na.omit(kingbirds.bbs.monsoon.pland.ndvi)
+na.kingbirds.pland <- na.omit(kingbirds.bbs.monsoon.dat.pland)
+na.kingbirds <- na.omit(kingbirds.bbs.monsoon.dat)
+na.kingbirds.ndvi.c.o <- na.omit(kingbirds.bbs.monsoon.pland.ndvi.c.o)
+na.kingbirds.pland.c.o <- na.omit(kingbirds.bbs.monsoon.dat.pland.c.o)
+na.kingbirds.c.o <- na.omit(kingbirds.bbs.monsoon.c.o)
+
+na.oror.ndvi <- na.omit(oror.bbs.monsoon.pland.ndvi)
+na.oror.pland <- na.omit(oror.bbs.monsoon.dat.pland)
+na.oror <- na.omit(oror.bbs.monsoon.dat)
+na.oror.ndvi.c.o <- na.omit(oror.bbs.monsoon.pland.ndvi.c.o)
+na.oror.pland.c.o <- na.omit(oror.bbs.monsoon.dat.pland.c.o)
+na.oror.c.o <- na.omit(oror.bbs.monsoon.c.o)
+
+
+## preparing version of the datasets in only the past 10 years
+na.buntings.recent <- na.buntings.ndvi %>% 
+  filter(year >= 2008)
+na.orioles.recent  <- na.orioles.ndvi %>% 
+  filter(year >= 2008)
+na.pabu.recent  <- na.pabu.ndvi %>% 
+  filter(year >= 2008)
+na.tanagers.recent  <- na.tanagers.ndvi %>% 
+  filter(year >= 2008)
+na.goldfinches.recent  <- na.goldfinches.ndvi %>% 
+  filter(year >= 2008)
+na.grosbeaks.recent  <- na.grosbeaks.ndvi %>% 
+  filter(year >= 2008)
+na.warblers.recent  <- na.warblers.ndvi %>% 
+  filter(year >= 2008)
+na.flycatchers.recent  <- na.flycatchers.ndvi %>% 
+  filter(year >= 2008)
+na.lasp.recent  <- na.lasp.ndvi %>% 
+  filter(year >= 2008)
+na.chsp.recent  <- na.chsp.ndvi %>% 
+  filter(year >= 2008)
+na.wavi.recent  <- na.wavi.ndvi %>% 
+  filter(year >= 2008)
+na.kingbirds.recent  <- na.kingbirds.ndvi %>% 
+  filter(year >= 2008)
+na.oror.recent  <- na.oror.ndvi %>% 
+  filter(year >= 2008)
+
+
+# transforming predictor variables to anomaly -----------------------------
+### for each predictor variable, look at difference 
+### from mean value (anomaly) instead of raw value
+
+# making a vector of each final dataset
+datasets <- grep("^na", names(.GlobalEnv), value = TRUE)
+
+# converting vector of names of datasets to list of datasets
+datasets_list <- mget(datasets)
+
+# transforming environmental variables in each dataset
+datasets_t <- lapply(datasets_list, function(x){
+  # using regular expression to select columns with BCR in title
+  bcrs <- grep("[[:upper:]]{4}", names(x), value = TRUE)
+  
+  # separating out population change columns
+  climate_data <- x %>% 
+    select(-bcrs,-year)
+  bcr_data <- x %>% 
+    select(year, bcrs)
+  
+  # find mean of each predictor variable column, then calculate each value as deviation from that mean
+  climate_anomaly <- apply(climate_data, 2, function(x,y){
+    y <- mean(x)
+    x - y
+  })
+  cbind(bcr_data, climate_anomaly)
+})
+
+## moving new, transformed data frames with yearly anomaly
+## data back to global environment (replacing old data 
+## frames with same name)
+list2env(datasets_t,globalenv())

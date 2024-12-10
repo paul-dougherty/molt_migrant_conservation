@@ -12,7 +12,7 @@ ebird.prcp.dat <- regional.prcp.dat %>%
   filter(year...1 >= 2007 & year...1 <= 2022)
 
 
-setwd("/Volumes/arcconly$/CarlingLab/pdoughe1/Molt_migrant_conservation/monsoon_arrival_estimates/ebird_arrival_model_outputs")
+setwd("/Volumes/arcconly$/...Lab/.../Molt_migrant_conservation/monsoon_arrival_estimates/ebird_arrival_model_outputs")
 
 # Lazuli Bunting ----------------------------------------------------------
 lazb_iteration_estimates <- readRDS("lazb_iterations.RData")

@@ -117,7 +117,7 @@ plot(species_changes_all$trend_basic ~ species_changes_all$trend_slope)
 # extracting posterior distributions of beta coefficients from bbs yc ~ monsoon precip models  -----------------------------
 
 # reading in monsoon model iterations
-setwd("/Users/pauldougherty/Documents/Dissertation Research/Molt Migrant Conservation")
+setwd("/Users/.../Documents/Dissertation Research/Molt Migrant Conservation")
 
 monsoon_mod_iterations <- readRDS("bbs_monsoon_mods_iterations.RData")
 
